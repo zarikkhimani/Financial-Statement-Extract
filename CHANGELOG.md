@@ -13,4 +13,5 @@
 - Replaced the original monolithic script with focused extraction, normalization, mapping, audit, Excel, pipeline, and UI modules.
 - Removed the embedded Base64 image, hardcoded desktop path, bundled Tabula JAR, and Java dependency.
 - Added local PDF and HTML/iXBRL extraction, automatic statement-page detection, presentation-ready Excel output, explicit OCR-required reporting, and automated tests.
+- Improved interim-statement workbook headers and recognition of banking income-statement sections.
 - Preserved source values and provenance; missing values are not converted to zero and reporting periods are not invented.

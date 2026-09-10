@@ -82,6 +82,26 @@ Total Assets 1234567890 100000
         workbook.close()
 
 
+def test_long_interim_period_headers_wrap_and_have_sufficient_height(tmp_path):
+    result = parse_text_to_result(
+        """Example Bank
+Consolidated Statements of Comprehensive Income (unaudited)
+Three Months Ended June 30, Six Months Ended June 30,
+(in millions) 2025 2024 2025 2024
+Net income 15 14 30 27
+"""
+    )
+
+    output = write_extraction_workbook(result, tmp_path / "interim_result.xlsx")
+    workbook = load_workbook(output)
+    try:
+        sheet = workbook["Income Statement"]
+        assert sheet["B5"].alignment.wrap_text is True
+        assert sheet.row_dimensions[5].height >= 30
+    finally:
+        workbook.close()
+
+
 def test_pdf_result_writes_all_three_raw_methods_as_editable_grids(tmp_path):
     result = parse_text_to_result(
         """Example Company

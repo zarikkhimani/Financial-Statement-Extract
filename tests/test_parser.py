@@ -37,6 +37,7 @@ CONSOLIDATED STATEMENTS OF COMPREHENSIVE INCOME (unaudited)
 Comerica Incorporated and Subsidiaries
 Three Months Ended June 30, Six Months Ended June 30,
 (in millions) 2025 2024 2025 2024
+INTEREST INCOME
 Interest income 30 28 60 55
 Net income 15 14 30 27
 """
@@ -52,6 +53,8 @@ Net income 15 14 30 27
     ]
     net_income = df[df["RawItem"] == "Net income"].iloc[0]
     assert list(net_income[df.attrs["period_labels"]]) == [15, 14, 30, 27]
+    assert "INTEREST INCOME" in set(df.loc[df["RowType"] == "Section", "RawItem"])
+    assert "Interest income" in set(df.loc[df["RowType"] == "Data", "RawItem"])
 
 
 def test_missing_period_header_causes_no_invention():
