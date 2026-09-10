@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve Financial Statement Extract. Do not attach confidential filings or workbooks. Report security issues through the private process in SECURITY.md.
+        Thank you for taking the time to report a problem. Please do not attach confidential filings or workbooks. Report security issues through the private process in SECURITY.md.
   - type: input
     id: version
     attributes:

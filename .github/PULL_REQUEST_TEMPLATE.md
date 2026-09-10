@@ -1,3 +1,5 @@
+Thank you for contributing. Please provide a concise summary and complete the applicable checks below.
+
 ## Summary
 
 Describe the problem and the approach taken.

@@ -1,8 +1,8 @@
 # Contributing
 
-Thank you for helping improve Financial Statement Extract. Changes should preserve source fidelity, reviewability, and safe local defaults.
+Thank you for considering a contribution to Financial Statement Extract. Clear, focused improvements are welcome. Changes should preserve source fidelity, reviewability, and safe local defaults.
 
-Report suspected vulnerabilities through the private process in [SECURITY.md](SECURITY.md), not through a public issue.
+Before opening an issue or pull request, please remove all confidential or identifying information. Report suspected vulnerabilities through the private process in [SECURITY.md](SECURITY.md), not through a public issue.
 
 ## Development setup
 
@@ -37,6 +37,6 @@ Add regression tests for bug fixes and document any change to extraction semanti
 
 ## Pull requests
 
-Keep changes focused, explain user-visible behavior, list the checks run, and call out limitations that were not tested. A change is not ready to merge while required CI checks are failing.
+Please keep changes focused, explain user-visible behavior, list the checks run, and identify any limitations that were not tested. A change is not ready to merge while required CI checks are failing.
 
 By contributing, you agree that your contribution will be licensed under the repository's [MIT License](LICENSE).
