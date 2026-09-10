@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest a focused improvement to the extraction workflow.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: What are you trying to accomplish, and what is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed improvement
+      description: Describe the behavior you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: auditability
+    attributes:
+      label: Auditability considerations
+      description: Explain how the change should preserve source values, provenance, and reviewability.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include any current workaround or competing approach.

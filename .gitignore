@@ -1,0 +1,51 @@
+# Local environments and Python caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Financial source documents and generated workbooks
+*.pdf
+*.html
+*.htm
+*.xhtml
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.tsv
+inputs/
+input/
+outputs/
+output/
+tmp/
+temp/
+
+# Build output and local binaries
+build/
+dist/
+*.egg-info/
+*.jar
+*.log
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Superseded local v27 entry points retained outside the clean repository
+CHANGELOG_v27.md
+run_z27.bat
+z27.py

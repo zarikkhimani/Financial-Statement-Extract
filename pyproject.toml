@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=77,<82"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "financial-statement-extract"
+version = "0.1.0"
+description = "Local, auditable extraction of financial statements from PDF and HTML filings into Excel."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["financial-statements", "pdf", "ixbrl", "excel", "audit"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pandas>=2.1,<4",
+    "pdfplumber>=0.11,<1",
+    "camelot-py>=1.0,<3",
+    "XlsxWriter>=3.1,<4",
+    "tkinterdnd2>=0.4.2,<1",
+    "beautifulsoup4>=4.12,<5",
+    "lxml>=5.0,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2,<2",
+    "openpyxl>=3.1,<4",
+    "pytest>=8.0,<10",
+    "ruff>=0.9,<1",
+]
+
+[project.scripts]
+financial-extract = "financial_statement_extract.cli:main"
+
+[project.gui-scripts]
+financial-extract-gui = "financial_statement_extract.gui:main"
+
+[project.urls]
+Documentation = "https://github.com/zarikkhimani/Financial-Statement-Extract#readme"
+Repository = "https://github.com/zarikkhimani/Financial-Statement-Extract"
+Issues = "https://github.com/zarikkhimani/Financial-Statement-Extract/issues"
+Changelog = "https://github.com/zarikkhimani/Financial-Statement-Extract/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+py-modules = [
+    "app",
+    "audit",
+    "config",
+    "excel_writer",
+    "extractors",
+    "html_extractor",
+    "mapper",
+    "models",
+    "normalization",
+    "path_policy",
+    "pipeline",
+    "statements",
+    "structure",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["financial_statement_extract*"]
+
+[tool.setuptools.package-data]
+financial_statement_extract = ["py.typed"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

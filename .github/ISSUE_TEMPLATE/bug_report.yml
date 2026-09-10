@@ -1,0 +1,69 @@
+name: Bug report
+description: Report a reproducible problem using synthetic or public data.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Financial Statement Extract. Do not attach confidential filings or workbooks. Report security issues through the private process in SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: 0.1.0 or a commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      options:
+        - Desktop application
+        - Command line
+        - Python API
+    validations:
+      required: true
+  - type: dropdown
+    id: input_type
+    attributes:
+      label: Input type
+      options:
+        - PDF with a text layer
+        - Image-only PDF
+        - HTML / HTM / XHTML
+        - Not input-specific
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the expected behavior and the actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Use synthetic, public, or irreversibly anonymized data only.
+      placeholder: |
+        1. Run ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Windows version, Python version, and relevant dependency details.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      description: Remove client names, paths, account details, and other sensitive information.
+      render: shell
