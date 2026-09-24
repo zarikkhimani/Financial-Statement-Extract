@@ -1,9 +1,89 @@
 from openpyxl import load_workbook
 import pandas as pd
+import pytest
 
 from excel_writer import write_extraction_workbook
 from models import ExtractionResult
 from pipeline import parse_text_to_result
+
+
+@pytest.mark.parametrize("source_type", ["pdf", "html"])
+def test_pdf_income_uses_full_parsed_periods_without_changing_html_grids(tmp_path, source_type):
+    result = parse_text_to_result(
+        """Example Fund
+Consolidated Statements of Operations (unaudited)
+(In thousands, except share and per share data)
+Three months ended June 30, Nine months ended June 30,
+2026 2025 2026 2025
+Investment income
+Interest income 100 90 300 270
+Fee income 20 10 60 30
+Total investment income 120 100 360 300
+Excise tax benefit — — — (5)
+Net income 12.50 10.25 37.50 30.75
+"""
+    )
+    result.metadata["source_file"] = f"example.{source_type}"
+    frame = result.statements["IncomeStatement"]
+    # The table engine captured years and currency columns, but missed the
+    # duration/date headings. Its replacement glyph must stay in raw output.
+    grid = {
+        "rows": [["", "", "2026", "", "2025", "", "2026", "", "2025"],
+                 ["Interest income", "$", "100", "$", "90", "$", "300", "$", "270"],
+                 ["Excise tax benefit", "", "�", "", "�", "", "�", "", "(5)"]],
+        "flavor": source_type, "statement_type": "IncomeStatement", "spans": [],
+    }
+    frame.attrs["source_tables"] = [grid]
+    result.raw_table_cells = [
+        dict(source_page=1, table_id="P0001_STREAM_01", flavor="stream", selected=True,
+             row_index=r, column_index=c, raw_text=value)
+        for r, row in enumerate(grid["rows"]) for c, value in enumerate(row)
+    ] if source_type == "pdf" else []
+    result.extraction_audit_rows.append(dict(
+        Check="Source table coverage", Scope="Page 1", Status="WARN", Detail="Review source coverage."
+    ))
+    output = write_extraction_workbook(result, tmp_path / f"{source_type}.xlsx")
+    book = load_workbook(output)
+    try:
+        if source_type == "html":
+            sheet = book["Statement 1"]
+            assert sheet["E8"].value == 2026
+            assert sheet["D9"].value == "$"
+            assert sheet["E10"].value == "�"
+            return
+        sheet = book["Income Statement"]
+        assert sheet.max_column == 7
+        assert sheet["C5"].value == "Consolidated Statements of Operations (unaudited)"
+        assert sheet["C6"].value == "(In thousands, except share and per share data)"
+        assert [sheet.cell(8, c).value for c in range(4, 8)] == [
+            "Three months ended June 30, 2026", "Three months ended June 30, 2025",
+            "Nine months ended June 30, 2026", "Nine months ended June 30, 2025",
+        ]
+        assert sheet["D8"].alignment.wrap_text
+        assert sheet.row_dimensions[8].height >= 30
+        rows = {row[0].value: row for row in sheet.iter_rows(min_row=9, min_col=3)}
+        assert [c.value for c in rows["Total investment income"][1:]] == [120, 100, 360, 300]
+        assert rows["Total investment income"][1].font.bold
+        assert rows["Total investment income"][1].border.top.style == "thin"
+        assert [c.value for c in rows["Excise tax benefit"][1:]] == [None, None, None, -5]
+        assert [c.value for c in rows["Net income"][1:]] == [12.5, 10.25, 37.5, 30.75]
+        assert rows["Net income"][1].number_format == "#,##0.00;(#,##0.00);-"
+        assert not any(c.value == "�" for row in sheet.iter_rows(min_col=3) for c in row)
+        assert book["Stream"]["E10"].value == "�"
+        assert any(row[3].value == "Review source coverage." and row[0].value == "WARN" for row in book["Review"].iter_rows(min_col=3))
+        assert frame.attrs["source_tables"] == [grid]
+    finally:
+        book.close()
+
+
+def test_pdf_income_without_parsed_periods_fails_before_creating_workbook(tmp_path):
+    result = parse_text_to_result("Income Statements\n2026 2025\nNet income 10 9")
+    result.metadata["source_file"] = "example.pdf"
+    result.statements["IncomeStatement"].attrs["period_labels"] = []
+    output = tmp_path / "missing-periods.xlsx"
+    with pytest.raises(ValueError, match="income statement periods could not be parsed"):
+        write_extraction_workbook(result, output)
+    assert not output.exists()
 
 
 def test_pasted_text_result_writes_workbook(tmp_path):
@@ -20,15 +100,15 @@ Net income 30 20
 
     workbook = load_workbook(output)
     try:
-        assert workbook.sheetnames == ["Income Statement"]
-        sheet = workbook["Income Statement"]
-        assert sheet["A1"].value == "Example Company"
-        assert sheet["A2"].value == "Income Statements"
-        assert sheet["A3"].value is None
-        assert sheet["B5"].value == "2026"
-        assert sheet["A6"].value == "Revenue"
+        assert workbook.sheetnames == ["Income Statements", "Review"]
+        sheet = workbook["Income Statements"]
+        assert sheet["C4"].value == "Example Company"
+        assert sheet["C5"].value == "Income Statements"
+        assert sheet["C6"].value is None
+        assert sheet["D8"].value == "2026"
+        assert sheet["C9"].value == "Revenue"
         assert sheet.freeze_panes is None
-        for row in sheet.iter_rows():
+        for row in sheet.iter_rows(min_col=3):
             for cell in row:
                 assert cell.fill is None or cell.fill.fill_type is None
                 if cell.font is not None and cell.font.color is not None and cell.font.color.type == "rgb":
@@ -50,9 +130,9 @@ Net income 30.2 20.1
 
     workbook = load_workbook(output, read_only=True)
     try:
-        sheet = workbook["Income Statement"]
-        assert sheet["B6"].value == 300.5
-        assert sheet["B6"].number_format == "#,##0.0;(#,##0.0);-"
+        sheet = workbook["Income Statements"]
+        assert sheet["D9"].value == 300.5
+        assert sheet["D9"].number_format == "#,##0.0;(#,##0.0);-"
     finally:
         workbook.close()
 
@@ -71,11 +151,12 @@ Total Assets 1234567890 100000
 
     workbook = load_workbook(output)
     try:
-        sheet = workbook["Balance Sheet"]
+        sheet = workbook["Statement 1"]
+        assert sheet["C5"].value == "Consolidated Statements of Assets and Liabilities"
         period_columns = next(
             dimension
             for dimension in sheet.column_dimensions.values()
-            if dimension.min <= 2 and dimension.max >= 3
+            if dimension.min <= 4 and dimension.max >= 5
         )
         assert period_columns.width >= 19
     finally:
@@ -95,14 +176,14 @@ Net income 15 14 30 27
     output = write_extraction_workbook(result, tmp_path / "interim_result.xlsx")
     workbook = load_workbook(output)
     try:
-        sheet = workbook["Income Statement"]
-        assert sheet["B5"].alignment.wrap_text is True
-        assert sheet.row_dimensions[5].height >= 30
+        sheet = workbook["Statement 1"]
+        assert sheet["D8"].alignment.wrap_text is True
+        assert sheet.row_dimensions[8].height >= 30
     finally:
         workbook.close()
 
 
-def test_pdf_result_writes_all_three_raw_methods_as_editable_grids(tmp_path):
+def test_pdf_result_writes_raw_methods_and_experiment_as_editable_grids(tmp_path):
     result = parse_text_to_result(
         """Example Company
 Income Statements
@@ -161,22 +242,32 @@ Net income 30 20
     workbook = load_workbook(output)
     try:
         assert workbook.sheetnames == [
-            "Income Statement",
-            "Raw Camelot Lattice",
-            "Raw Camelot Stream",
-            "Raw PDFPlumber",
+            "Income Statements",
+            "Lattice",
+            "Stream",
+            "PDFPlumber",
+            "Experiential",
+            "Review",
         ]
-        lattice = workbook["Raw Camelot Lattice"]
-        assert lattice["A4"].value == "Table: P0002_LATTICE_01"
-        assert lattice["A5"].value == "Revenue"
-        assert lattice["B5"].value == "=1+1"
-        assert lattice["B5"].data_type == "s"
-        assert workbook["Raw Camelot Stream"]["A5"].value == "Net income"
-        assert workbook["Raw PDFPlumber"]["A5"].value == "Cash"
-        for sheet_name in workbook.sheetnames[1:]:
+        for tab in workbook:
+            assert all(cell.value is None for row in tab.iter_rows(min_row=1, max_row=3) for cell in row)
+            assert all(cell.value is None and not cell.has_style
+                       for row in tab.iter_rows(max_col=2) for cell in row)
+            assert tab.freeze_panes is None
+            assert not tab.merged_cells.ranges
+        assert workbook["Income Statements"]["C4"].alignment.horizontal == "centerContinuous"
+        assert workbook["Review"].auto_filter.ref.startswith("C8:")
+        lattice = workbook["Lattice"]
+        assert lattice["C7"].value == "Table: P0002_LATTICE_01"
+        assert lattice["C8"].value == "Revenue"
+        assert lattice["D8"].value == "=1+1"
+        assert lattice["D8"].data_type == "s"
+        assert workbook["Stream"]["C8"].value == "Net income"
+        assert workbook["PDFPlumber"]["C8"].value == "Cash"
+        for sheet_name in ["Lattice", "Stream", "PDFPlumber", "Experiential"]:
             sheet = workbook[sheet_name]
             assert sheet.freeze_panes is None
-            for row in sheet.iter_rows():
+            for row in sheet.iter_rows(min_col=3):
                 for cell in row:
                     assert cell.fill is None or cell.fill.fill_type is None
                     if cell.font is not None and cell.font.color is not None and cell.font.color.type == "rgb":
@@ -233,23 +324,23 @@ def test_document_text_is_always_written_as_literal_strings(tmp_path):
     output = write_extraction_workbook(result, tmp_path / "literal_strings.xlsx")
     workbook = load_workbook(output, data_only=False)
     try:
-        sheet = workbook["Income Statement"]
+        sheet = workbook["+SUM(1,1)"]
         expected_strings = {
-            "A1": "=1+1",
-            "A2": "+SUM(1,1)",
-            "A3": "-1+1",
-            "B5": first_period,
-            "C5": second_period,
-            "A6": "=SECTION()",
-            "A7": '=HYPERLINK("https://example.invalid", "open")',
-            "A8": "https://example.invalid/line-item",
+            "C4": "=1+1",
+            "C5": "+SUM(1,1)",
+            "C6": "-1+1",
+            "D8": first_period,
+            "E8": second_period,
+            "C9": "=SECTION()",
+            "C10": '=HYPERLINK("https://example.invalid", "open")',
+            "C11": "https://example.invalid/line-item",
         }
         for coordinate, expected in expected_strings.items():
             cell = sheet[coordinate]
             assert cell.value == expected
             assert cell.data_type == "s"
             assert cell.hyperlink is None
-        assert sheet["B7"].value == 125.5
-        assert sheet["B7"].data_type == "n"
+        assert sheet["D10"].value == 125.5
+        assert sheet["D10"].data_type == "n"
     finally:
         workbook.close()

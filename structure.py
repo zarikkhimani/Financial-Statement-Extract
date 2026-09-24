@@ -19,6 +19,7 @@ INTERIM_PERIOD_RE = re.compile(
 def normalize_title(text: str) -> str:
     t = normalize_financial_text(text).lower().replace("’", "'")
     t = re.sub(r"\b(?:condensed\s+)?consolidated\s+", "", t)
+    t = re.sub(r"\b(?:condensed|combined)\s+", "", t)
     t = re.sub(r"[^a-z0-9' ]+", " ", t)
     return re.sub(r"\s+", " ", t).strip()
 
@@ -26,6 +27,7 @@ def normalize_title(text: str) -> str:
 def detect_statement_heading_type(line: str) -> str | None:
     """Match only a standalone statement heading, not a narrative reference."""
     heading = normalize_financial_text(line)
+    heading = re.sub(r"^(?:unaudited|audited)\s+", "", heading, flags=re.IGNORECASE)
     heading = re.sub(r"\s*\((?:unaudited|audited|continued)\)\s*\.?\s*$", "", heading, flags=re.IGNORECASE)
     norm = normalize_title(heading)
     if not norm:
@@ -139,25 +141,20 @@ def detect_period_labels(lines: list[dict]) -> list[str]:
 
 def detect_schedule_value_headers(lines: list[dict]) -> list[str]:
     """Detect common Schedule of Investments value columns when no period row exists."""
-    header = " ".join(normalize_financial_text(x.get("raw_text", "")) for x in lines[:25]).lower()
+    # Keep source spelling, capitalization and column order. Match the complete
+    # percentage heading before its shorter "Fair Value" prefix.
+    header = " ".join(normalize_financial_text(x.get("raw_text", "")) for x in lines[:25])
+    pattern = re.compile(
+        r"(?:fair value as a )?(?:percentage|percent|%) of net assets|"
+        r"\b(?:principal amount|par amount|cost|fair value)\b", re.IGNORECASE,
+    )
     labels: list[str] = []
-    candidates = [
-        ("principal amount", "Principal Amount"),
-        ("par amount", "Par Amount"),
-        ("cost", "Cost"),
-        ("fair value", "Fair Value"),
-    ]
-    for token, label in candidates:
-        if token in header and label not in labels:
+    seen: set[str] = set()
+    for match in pattern.finditer(header):
+        label = match.group(0)
+        if label.casefold() not in seen:
             labels.append(label)
-    if any(token in header for token in ("percentage of net assets", "% of net assets", "percent of net assets")):
-        labels.append("% of Net Assets")
-    # Most schedules present cost and fair value as the trailing numeric columns.
-    if "Cost" in labels and "Fair Value" in labels:
-        ordered = ["Cost", "Fair Value"]
-        if "% of Net Assets" in labels:
-            ordered.append("% of Net Assets")
-        return ordered
+            seen.add(label.casefold())
     return labels
 
 
@@ -226,7 +223,9 @@ def split_statement_sections(lines: list[dict]) -> dict[str, list[dict]]:
         text = normalize_financial_text(row.get("raw_text", ""))
         if not text:
             continue
-        detected = detect_statement_type(text)
+        # Narrative references to another statement do not change ownership.
+        # In particular, cash reconciliations refer to financial condition.
+        detected = row.get("statement_type_hint") or detect_statement_heading_type(text)
         if detected:
             current = detected
             sections[current].append(row)

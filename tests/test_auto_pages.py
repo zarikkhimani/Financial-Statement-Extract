@@ -50,7 +50,7 @@ def test_page_numbers_are_compacted_for_the_extraction_pipeline():
     assert format_page_numbers([2, 3, 4, 5, 7, 9, 10]) == "2-5,7,9-10"
 
 
-def test_auto_pages_handle_combined_income_title_and_skip_equity_rollforward():
+def test_auto_pages_handle_combined_income_title_and_include_equity_rollforward():
     page_texts = [
         """Example Company
 Consolidated Balance Sheets
@@ -89,7 +89,7 @@ Cash and cash equivalents, end of year 100 70
 """,
     ]
 
-    assert select_auto_statement_pages(page_texts) == [1, 2, 4]
+    assert select_auto_statement_pages(page_texts) == [1, 2, 3, 4]
 
 
 def test_auto_pages_accept_unaudited_headings_and_ignore_note_sentence_references():

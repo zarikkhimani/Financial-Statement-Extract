@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup, Tag, XMLParsedAsHTMLWarning
 
 from config import STATEMENT_TITLES
 from normalization import normalize_financial_text, parse_numeric_token
-from structure import detect_statement_heading_type, detect_statement_type
+from structure import detect_statement_heading_type
 
 
 HTML_SUFFIXES = {".html", ".htm", ".xhtml"}
@@ -74,30 +74,71 @@ def _document_metadata(soup: BeautifulSoup) -> dict:
 
 
 def _clean_dom(soup: BeautifulSoup) -> None:
-    for tag in list(soup.find_all(["script", "style", "noscript", "template", "svg", "sup"])):
+    for tag in list(soup.find_all(["script", "style", "noscript", "template", "svg"])):
         tag.decompose()
     for tag in list(soup.find_all(True)):
         if tag.parent is not None and _is_hidden(tag):
             tag.decompose()
 
 
-def _table_rows(table: Tag) -> tuple[list[str], list[list[str]]]:
+def _table_grid(table: Tag) -> tuple[list[str], list[list[str]], dict]:
     lines: list[str] = []
     cell_rows: list[list[str]] = []
+    occupied = set()
+    spans = {}
     for row in table.find_all("tr"):
         if row.find_parent("table") is not table:
             continue
         cells = row.find_all(["th", "td"], recursive=False)
-        values = [normalize_financial_text(cell.get_text(" ", strip=True)) for cell in cells]
-        if not any(values):
-            continue
+        r = len(cell_rows)
+        values = []
+        c = 0
+        for cell in cells:
+            while (r, c) in occupied:
+                values.append("")
+                c += 1
+            try:
+                rs = max(1, min(10000, int(cell.get("rowspan", 1))))
+                cs = max(1, min(1000, int(cell.get("colspan", 1))))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Invalid HTML table span") from exc
+            values.extend([normalize_financial_text(cell.get_text(" ", strip=True))] + [""] * (cs - 1))
+            spans[(r, c)] = (rs, cs)
+            occupied.update((rr, cc) for rr in range(r, r + rs) for cc in range(c, c + cs))
+            c += cs
         cell_rows.append(values)
         line = normalize_financial_text(" ".join(value for value in values if value))
         line = re.sub(r"(?<=\d)\s+%", "%", line)
         line = re.sub(r"(?<=\d)\s+[xX]\b", "x", line)
-        if line and (not lines or line != lines[-1]):
-            lines.append(line)
-    return lines, cell_rows
+        lines.append(line)
+    width = max((len(row) for row in cell_rows), default=0)
+    for row in cell_rows:
+        row.extend([""] * (width - len(row)))
+    return lines, cell_rows, spans
+
+
+def _table_rows(table: Tag) -> tuple[list[str], list[list[str]]]:
+    lines, rows, _ = _table_grid(table)
+    return lines, rows
+
+
+def _table_context(table: Tag) -> list[str]:
+    """Preserve period/unit captions outside the grid, up to its source heading."""
+    context = []
+    for element in table.find_all_previous(["table", "p", "div", "h1", "h2", "h3"], limit=30):
+        if element.name == "table":
+            break
+        if element.find("table") is not None:
+            continue
+        text = normalize_financial_text(element.get_text(" ", strip=True))
+        if detect_statement_heading_type(text):
+            break
+        if not text or len(text) > 220:
+            continue
+        if re.search(r"unaudited|in (?:thousands|millions|billions)|except.*share|(?:19|20)\d{2}", text, re.I):
+            if text not in context:
+                context.append(text)
+    return list(reversed(context))
 
 
 def _financial_line_count(lines: list[str]) -> int:
@@ -125,24 +166,31 @@ def _is_schedule_statement_grid(lines: list[str]) -> bool:
 
 
 def _nearby_statement_heading(table: Tag) -> tuple[str, str]:
+    from financial_statement_extract.detection import is_section_boundary
     for element in table.find_all_previous(["h1", "h2", "h3", "h4", "h5", "h6", "p", "div"], limit=30):
         if element.find("table") is not None:
             continue
         text = normalize_financial_text(element.get_text(" ", strip=True))
         if not text or len(text) > 220:
             continue
+        if is_section_boundary(text):
+            return "__supporting__", text
         statement_type = detect_statement_heading_type(text)
         if statement_type:
             return statement_type, text
     return "", ""
 
 
-def _detect_statement_table(table: Tag, lines: list[str]) -> tuple[str, str, int]:
+def _detect_statement_table(table: Tag, lines: list[str], context: tuple[str, str] | None = None) -> tuple[str, str, int]:
+    from financial_statement_extract.detection import is_section_boundary
     data_lines = _financial_line_count(lines)
-    if data_lines < 2:
+    nearby_type, nearby_heading = context if context is not None else _nearby_statement_heading(table)
+    if nearby_type == "__supporting__" or any(is_section_boundary(line) for line in lines[:3]):
+        return "", "", data_lines
+    if data_lines < (1 if nearby_type else 2):
         return "", "", data_lines
     for line in lines[:25]:
-        statement_type = detect_statement_heading_type(line) or detect_statement_type(line)
+        statement_type = detect_statement_heading_type(line)
         if statement_type and len(line) <= 220:
             return statement_type, line, data_lines
     low = " ".join(lines).lower()
@@ -172,8 +220,7 @@ def _detect_statement_table(table: Tag, lines: list[str]) -> tuple[str, str, int
         return "PartnersCapital", STATEMENT_TITLES["PartnersCapital"][0], data_lines
     if _is_schedule_statement_grid(lines):
         return "ScheduleOfInvestments", "Schedule of Investments", data_lines
-    nearby_type, nearby_heading = _nearby_statement_heading(table)
-    if nearby_type and nearby_type != "ScheduleOfInvestments":
+    if nearby_type:
         return nearby_type, nearby_heading, data_lines
     return "", "", data_lines
 
@@ -186,10 +233,6 @@ def _select_statement_candidates(candidates: list[dict]) -> list[dict]:
             (candidate for candidate in candidates if candidate["statement_type"] == statement_type),
             key=lambda item: item["table_index"],
         )
-        if statement_type != "ScheduleOfInvestments":
-            selected.append(max(matching, key=lambda item: item["data_lines"]))
-            continue
-
         groups: list[list[dict]] = []
         for candidate in matching:
             if not groups or candidate["table_index"] != groups[-1][-1]["table_index"] + 1:
@@ -250,9 +293,13 @@ def extract_html_filing(path: str | Path) -> tuple[list[dict], list[dict], list[
 
     candidates: list[dict] = []
     leaf_tables = [table for table in soup.find_all("table") if table.find("table") is None]
+    context = ("", "")
     for table_index, table in enumerate(leaf_tables, start=1):
-        lines, cell_rows = _table_rows(table)
-        statement_type, heading, data_lines = _detect_statement_table(table, lines)
+        lines, cell_rows, spans = _table_grid(table)
+        nearby = _nearby_statement_heading(table)
+        if nearby[0]:
+            context = nearby
+        statement_type, heading, data_lines = _detect_statement_table(table, lines, context)
         if statement_type:
             candidates.append({
                 "table_index": table_index,
@@ -261,6 +308,7 @@ def extract_html_filing(path: str | Path) -> tuple[list[dict], list[dict], list[
                 "data_lines": data_lines,
                 "lines": lines,
                 "cell_rows": cell_rows,
+                "spans": spans,
             })
 
     selected = _select_statement_candidates(candidates)
@@ -270,7 +318,7 @@ def extract_html_filing(path: str | Path) -> tuple[list[dict], list[dict], list[
     normalized_cells: list[dict] = []
     line_number = 1
 
-    def append_line(text: str, row_type_hint: str = "") -> None:
+    def append_line(text: str, row_type_hint: str = "", **hints) -> None:
         nonlocal line_number
         normalized = normalize_financial_text(text)
         if not normalized:
@@ -278,11 +326,12 @@ def extract_html_filing(path: str | Path) -> tuple[list[dict], list[dict], list[
         record = {
             "source_page": None,
             "line_no": line_number,
-            "raw_text": normalized,
+            "raw_text": text,
             "normalized_text": normalized,
             "machine_readable": True,
             "page_status": "HTML_EXTRACTED",
         }
+        record.update(hints)
         if row_type_hint:
             record["row_type_hint"] = row_type_hint
         raw_text_rows.append(record)
@@ -291,15 +340,34 @@ def extract_html_filing(path: str | Path) -> tuple[list[dict], list[dict], list[
     if detected_metadata.get("client_name"):
         append_line(detected_metadata["client_name"])
     for candidate in selected:
-        if not any(detect_statement_type(line) == candidate["statement_type"] for line in candidate["lines"][:25]):
-            append_line(candidate["heading"] or STATEMENT_TITLES[candidate["statement_type"]][0])
+        source_title = next((
+            line for line in candidate["lines"][:25]
+            if detect_statement_heading_type(line) == candidate["statement_type"]
+        ), "")
+        if not source_title:
+            table = leaf_tables[candidate["table_index"] - 1]
+            nearby_type, nearby_title = _nearby_statement_heading(table)
+            if nearby_type == candidate["statement_type"]:
+                source_title = nearby_title
+        if source_title and source_title not in candidate["lines"]:
+            append_line(source_title, statement_type_hint=candidate["statement_type"], source_title=source_title)
+        source_context = _table_context(leaf_tables[candidate["table_index"] - 1])
+        for caption in source_context:
+            append_line(caption, "section", statement_type_hint=candidate["statement_type"], source_title=source_title)
         for line, cell_row in zip(candidate["lines"], candidate["cell_rows"]):
             has_values = any(
                 parse_numeric_token(value).status in {"NUMERIC", "DASH", "NA", "NM"}
                 for value in cell_row[1:]
             )
-            append_line(line, "" if has_values else "section")
+            append_line(line, "" if has_values else "section",
+                        statement_type_hint=candidate["statement_type"], source_title=source_title)
         table_raw, table_normalized = _cell_records(candidate["table_index"], candidate["cell_rows"])
+        for cell in table_raw:
+            cell["statement_type_hint"] = candidate["statement_type"]
+            cell["source_title"] = source_title
+            cell["source_context"] = source_context
+            cell["rowspan"], cell["colspan"] = candidate["spans"].get(
+                (cell["row_index"], cell["column_index"]), (1, 1))
         raw_cells.extend(table_raw)
         normalized_cells.extend(table_normalized)
 

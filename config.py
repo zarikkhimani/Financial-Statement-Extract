@@ -19,6 +19,8 @@ STATEMENT_TITLES = {
         "balance sheets",
         "statement of financial position",
         "statements of financial position",
+        "statement of financial condition",
+        "statements of financial condition",
         "statement of assets and liabilities",
         "statements of assets and liabilities",
     ),
@@ -44,9 +46,8 @@ STATEMENT_TITLES = {
         "cash flow statement",
         "cash flow statements",
     ),
-    # Recognize public-company equity roll-forwards as document boundaries so
-    # they cannot be absorbed into an adjacent core statement. They are not
-    # currently emitted as output worksheets.
+    # Recognize public-company equity roll-forwards as separate statements so
+    # they can be exported without being absorbed into an adjacent statement.
     "StockholdersEquityStatement": (
         "statement of stockholders' equity",
         "statements of stockholders' equity",
@@ -73,7 +74,9 @@ STATEMENT_TITLES = {
     ),
     "ScheduleOfInvestments": (
         "schedule of investments",
+        "schedules of investments",
         "schedule of portfolio investments",
+        "schedules of portfolio investments",
         "portfolio of investments",
     ),
 }

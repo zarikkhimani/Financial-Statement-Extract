@@ -13,6 +13,7 @@ from structure import (
     detect_partners_capital_value_headers,
     detect_period_labels,
     detect_schedule_value_headers,
+    detect_statement_heading_type,
     detect_statement_type,
     detect_statement_unit_note,
     infer_company_name,
@@ -32,6 +33,8 @@ def _is_structural_header(text: str) -> bool:
     if normalized.endswith(":") and not re.search(r"\d", normalized):
         return True
     if cleaned in SECTION_HINTS:
+        return True
+    if cleaned in {"PER COMMON SHARE DATA", "PER SHARE DATA"}:
         return True
     if any(cleaned.startswith(prefix) for prefix in (
         "CASH FLOWS FROM OPERATING ACTIVITIES",
@@ -225,6 +228,7 @@ def _condense_lines(section_rows: list[dict], n_periods: int, statement_type: st
                     label, balance_context = inferred
                     output.append({
                         "raw_text": f"{label} {text}",
+                        "inferred_label": True,
                         "source_page": row.get("source_page"),
                         "line_no": row.get("line_no"),
                     })
@@ -263,10 +267,11 @@ def _parse_statement_section(statement_type: str, section_rows: list[dict], comp
         period_labels = detect_period_labels(section_rows)
     unit_info = detect_statement_unit_note(section_rows)
     statement_title = next((
-        normalize_financial_text(row.get("raw_text", ""))
+        str(row.get("raw_text", ""))
         for row in section_rows[:20]
-        if detect_statement_type(row.get("raw_text", "")) == statement_type
+        if not row.get("synthetic_heading") and detect_statement_heading_type(row.get("raw_text", "")) == statement_type
     ), "")
+    statement_title = next((row["source_title"] for row in section_rows if row.get("source_title")), statement_title)
     parsed_rows: list[dict] = []
     parsed_cells: list[dict] = []
     issues: list[dict] = []
@@ -296,7 +301,7 @@ def _parse_statement_section(statement_type: str, section_rows: list[dict], comp
                 "RowType": "Section",
                 "Category": "",
                 "SubCategory": "",
-                "RawItem": text.rstrip(":"),
+                "RawItem": text,
                 "StandardItem": text.rstrip(":"),
                 "MappingConfidence": 1.0,
                 "MappingRule": "section",
@@ -330,7 +335,7 @@ def _parse_statement_section(statement_type: str, section_rows: list[dict], comp
             continue
 
         raw_desc, raw_values = matched
-        raw_desc, note = _extract_note_from_description(raw_desc)
+        mapping_desc, note = _extract_note_from_description(raw_desc)
         if not raw_desc:
             continue
 
@@ -338,15 +343,18 @@ def _parse_statement_section(statement_type: str, section_rows: list[dict], comp
             from models import MappingResult
             mapping = MappingResult(raw_desc, raw_desc, "Investment Schedule", "Investment", 1.0, "investment_row")
         else:
-            mapping = map_concept(statement_type, raw_desc, current_context)
+            mapping = map_concept(statement_type, mapping_desc, current_context)
         out = {
             "RowType": "Data",
             "Category": mapping.category or current_context.replace("_", " ").title(),
             "SubCategory": mapping.subcategory,
-            "RawItem": raw_desc,
+            "RawItem": "" if row.get("inferred_label") else raw_desc,
             "StandardItem": mapping.standard_item,
             "MappingConfidence": mapping.confidence,
             "MappingRule": mapping.rule,
+            "InternalID": mapping.internal_id,
+            "AnalyticalFamily": mapping.analytical_family,
+            "MappingRelationship": "inferred" if row.get("inferred_label") else mapping.relationship,
             "Context": current_context,
             "Note": note,
             "SourcePage": row.get("source_page"),
@@ -362,7 +370,10 @@ def _parse_statement_section(statement_type: str, section_rows: list[dict], comp
                 "source_page": row.get("source_page"),
                 "source_line": row.get("line_no"),
                 "source_order": source_order,
-                "raw_item": raw_desc,
+                "raw_item": "" if row.get("inferred_label") else raw_desc,
+                "internal_id": mapping.internal_id,
+                "analytical_family": mapping.analytical_family,
+                "mapping_relationship": out["MappingRelationship"],
                 "standard_item": mapping.standard_item,
                 "mapping_confidence": mapping.confidence,
                 "mapping_rule": mapping.rule,
@@ -403,10 +414,7 @@ def _parse_statement_section(statement_type: str, section_rows: list[dict], comp
             "statement_title": statement_title,
             "statement_type": statement_type,
             "period_labels": period_labels,
-            "unit_label": unit_info["unit_label"],
-            "scale_factor": unit_info["scale_factor"],
-            "currency": unit_info["currency"],
-            "raw_unit_note": unit_info["raw_unit_note"],
+            **unit_info,
         })
     return df, parsed_cells, issues
 
@@ -429,6 +437,8 @@ def parse_financial_statements(text_rows: Iterable[dict] | str) -> tuple[dict[st
 
     for statement_type, section_rows in sections.items():
         if statement_type in BOUNDARY_ONLY_STATEMENT_TYPES:
+            issues.append({"Check": "Equity column layout", "Scope": statement_type, "Status": "NOT_TESTED",
+                           "Detail": "Equity requires source table columns; the text-only parser does not infer them from dates."})
             continue
         df, cells, section_issues = _parse_statement_section(statement_type, section_rows, company_name)
         parsed_cells.extend(cells)

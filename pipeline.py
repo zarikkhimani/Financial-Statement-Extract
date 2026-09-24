@@ -7,11 +7,15 @@ import unicodedata
 
 from audit import run_financial_audits
 from excel_writer import write_extraction_workbook
-from extractors import auto_detect_statement_pages, extract_page_text_pdfplumber, extract_tables_camelot, extract_tables_pdfplumber, format_page_numbers, get_page_count, get_pdf_document_type, parse_page_numbers
+from extractors import extract_page_text_pdfplumber, extract_tables_camelot, extract_tables_pdfplumber, format_page_numbers, get_page_count, get_pdf_document_type
 from html_extractor import HTML_SUFFIXES, extract_html_filing
 from models import ExtractionResult
+from financial_statement_extract.pdfplumber_experimental import extract_tables_pdfplumber_experimental
 from path_policy import normalize_path
 from statements import parse_financial_statements
+from financial_statement_extract.page_selection import build_page_plan, resolve_page_plan, strict_page_numbers
+from financial_statement_extract.table_layout import covered_pages, organize_source_tables
+from financial_statement_extract.progress import ExtractionStage as Stage, ProgressReporter, report
 
 
 PUBLIC_DOCUMENT_PATTERNS = (
@@ -177,7 +181,7 @@ def _extraction_metrics(raw_text_rows: list[dict], raw_table_cells: list[dict], 
         {"Check": "Pages requested", "Scope": "Document", "Status": "INFO", "Detail": str(len(pages_requested))},
         {"Check": "Pages with machine-readable text", "Scope": "Document", "Status": "INFO", "Detail": str(len(text_pages))},
         {"Check": "Pages requiring OCR", "Scope": "Document", "Status": "WARN" if ocr_pages else "PASS", "Detail": ", ".join(map(str, sorted(x for x in ocr_pages if x))) if ocr_pages else "0"},
-        {"Check": "Selected Camelot tables", "Scope": "Document", "Status": "INFO", "Detail": str(len(table_ids))},
+        {"Check": "Selected tables", "Scope": "Document", "Status": "INFO", "Detail": str(len(table_ids))},
         {"Check": "Low-quality selected tables", "Scope": "Document", "Status": "WARN" if low_quality_table_ids else "PASS", "Detail": ", ".join(sorted(x for x in low_quality_table_ids if x)) if low_quality_table_ids else "0"},
         {"Check": "Parsed statement rows", "Scope": "Document", "Status": "INFO", "Detail": str(mapped_rows)},
         {"Check": "Unmapped or low-confidence rows", "Scope": "Document", "Status": "WARN" if unmapped else "PASS", "Detail": str(len(unmapped))},
@@ -193,40 +197,96 @@ def extract_pdf_to_workbook(
     output_dir: str | None = None,
     *,
     allow_nonlocal_paths: bool = False,
+    page_policy: str = "review",
+    table_strategy: str = "adaptive",
+    progress: ProgressReporter | None = None,
 ) -> tuple[ExtractionResult, Path]:
+    report(progress, Stage.VALIDATING)
+    if table_strategy not in {"adaptive", "all"}:
+        raise ValueError("table_strategy must be 'adaptive' or 'all'.")
     path = normalize_path(pdf_path, allow_nonlocal_paths=allow_nonlocal_paths)
     if not path.exists():
         raise FileNotFoundError(path)
 
+    report(progress, Stage.DETECTING_PAGES, "Reading PDF text and preparing the page selection")
     page_count = get_page_count(path)
     requested_pages = (pages or "").strip()
     auto_mode = requested_pages.lower() in {"", "auto", "(auto)"}
     if auto_mode:
-        detected_pages = auto_detect_statement_pages(path)
-        effective_pages = format_page_numbers(detected_pages)
+        from financial_statement_extract.pdf_detection import scan_pdf_statements
+        page_plan, raw_text_rows, text_audit = scan_pdf_statements(path)
+        effective_pages = format_page_numbers(list(page_plan.selected_pages))
         if not effective_pages:
             raise ValueError("Auto page detection could not find financial statements. Type page numbers in the Pages field and try again.")
     else:
         effective_pages = requested_pages
-    page_indices = parse_page_numbers(effective_pages, page_count)
+    requested_numbers = strict_page_numbers(effective_pages, page_count)
+    page_indices = [page - 1 for page in requested_numbers]
     if not page_indices:
         raise ValueError("No valid pages were selected.")
 
-    raw_text_rows, text_audit = extract_page_text_pdfplumber(path, effective_pages)
-    camelot_raw, camelot_normalized, camelot_audit = extract_tables_camelot(path, effective_pages)
+    if not auto_mode:
+        raw_text_rows, text_audit = extract_page_text_pdfplumber(path, effective_pages)
+        page_plan = build_page_plan(str(path), raw_text_rows, requested_numbers, "manual")
+    page_plan = resolve_page_plan(page_plan, page_policy)
+    effective_pages = format_page_numbers(list(page_plan.selected_pages))
+    page_indices = [page - 1 for page in page_plan.selected_pages]
+    raw_text_rows = [row for row in raw_text_rows if row.get("source_page") in page_plan.selected_pages]
+    report(progress, Stage.EXTRACTING_TABLES, f"PDFPlumber · {len(page_plan.selected_pages)} selected pages")
     plumber_raw, plumber_normalized, plumber_table_audit = extract_tables_pdfplumber(path, effective_pages)
+    for row in plumber_raw:
+        row["selected"] = True
+    covered = covered_pages(plumber_raw, raw_text_rows)
+    fallback_pages = list(page_plan.selected_pages) if table_strategy == "all" else [
+        page for page in page_plan.selected_pages if page not in covered]
+    camelot_raw, camelot_normalized, camelot_audit = ([], [], [])
+    if fallback_pages:
+        report(progress, Stage.EXTRACTING_TABLES, f"Camelot fallback · {len(fallback_pages)} pages")
+        camelot_raw, camelot_normalized, camelot_audit = extract_tables_camelot(
+            path, format_page_numbers(fallback_pages))
 
-    # Prefer Camelot's selected flavor when it found a table. Use pdfplumber table
-    # structures as a page-level fallback and preserve every candidate in Raw_Tables.
+    # Keep sufficiently covered PDFPlumber grids. For other pages use Camelot's
+    # selected flavor if available, preserving every attempted raw candidate.
+    for row in camelot_raw:
+        if row.get("source_page") in covered:
+            row["selected"] = False
     camelot_selected_pages = {r.get("source_page") for r in camelot_raw if r.get("selected")}
     for row in plumber_raw:
         row["selected"] = row.get("source_page") not in camelot_selected_pages
     plumber_selected_pages = {r.get("source_page") for r in plumber_raw if r.get("selected")}
     raw_table_cells = camelot_raw + plumber_raw
-    normalized_table_cells = camelot_normalized + [r for r in plumber_normalized if r.get("source_page") in plumber_selected_pages]
+    normalized_table_cells = [r for r in camelot_normalized if r.get("source_page") in camelot_selected_pages] + [r for r in plumber_normalized if r.get("source_page") in plumber_selected_pages]
     table_audit = camelot_audit + plumber_table_audit
+    table_audit.append({"Check": "Table extraction strategy", "Scope": "Document", "Status": "INFO",
+                        "Detail": f"{table_strategy}: PDFPlumber first; Camelot attempted on "
+                        f"{len(fallback_pages)} of {len(page_plan.selected_pages)} pages. "
+                        "Adaptive skips Camelot only with at least 97% numeric-token coverage."})
 
-    statements, parsed_cells, parser_issues, unmapped = parse_financial_statements(raw_text_rows)
+    report(progress, Stage.EXTRACTING_TABLES, "PDFPlumber Experimental - independent comparison")
+    experimental_raw, experimental_normalized, experimental_audit = extract_tables_pdfplumber_experimental(
+        path, effective_pages)
+
+    report(progress, Stage.PARSING, "Preserving statement labels and source-table layouts")
+    if auto_mode:
+        from financial_statement_extract.pdf_detection import statement_rows_from_plan
+        parser_rows = statement_rows_from_plan(raw_text_rows, page_plan)
+    else:
+        parser_rows = raw_text_rows
+    statements, parsed_cells, parser_issues, unmapped = parse_financial_statements(parser_rows)
+    statement_tables, layout_issues = organize_source_tables(raw_table_cells, parser_rows, statements, page_plan)
+    from financial_statement_extract.balance_layout import recover_pdf_balance_tables
+    statement_tables, balance_issues = recover_pdf_balance_tables(path, statement_tables, statements, page_plan)
+    layout_issues.extend(balance_issues)
+    from financial_statement_extract.equity_layout import recover_pdf_equity_tables
+    statement_tables, equity_issues = recover_pdf_equity_tables(path, statement_tables, statements, page_plan)
+    layout_issues.extend(equity_issues)
+    table_audit.extend(layout_issues)
+    incomplete = set(page_plan.selected_pages) - covered_pages(raw_table_cells, raw_text_rows)
+    if incomplete:
+        table_audit.append({"Check": "Source table coverage", "Scope": "Document", "Status": "WARN",
+                            "Detail": "Raw extraction candidates have incomplete numeric-token coverage on pages " + format_page_numbers(list(incomplete))
+                            + ". Recovered statement rows are checked separately. Review the source; table discovery alone is not proof of completeness."})
+    report(progress, Stage.AUDITING, "Checking extracted statements and preparing output metadata")
     financial_audit = run_financial_audits(statements, parser_issues)
 
     meta = dict(metadata or {})
@@ -239,9 +299,12 @@ def extract_pdf_to_workbook(
         "source_path": str(path),
         "pages_requested": "auto" if auto_mode else requested_pages,
         "pages_selected": effective_pages,
+        "statement_page_plan": page_plan.to_dict(),
         "page_count": page_count,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "rescaled_values": False,
+        "table_strategy": table_strategy,
+        "table_fallback_pages": fallback_pages,
         "value_policy": "Source dashes/NA/NM/blanks remain missing statuses; no missing periods are invented.",
     })
 
@@ -258,7 +321,15 @@ def extract_pdf_to_workbook(
         parsed_cells=parsed_cells,
         financial_audit_rows=financial_audit,
         unmapped_rows=unmapped,
+        page_plan=page_plan,
+        statement_tables=statement_tables,
+        experimental_raw_table_cells=experimental_raw,
+        experimental_normalized_table_cells=experimental_normalized,
+        experimental_audit_rows=experimental_audit,
     )
+
+    from financial_statement_extract.workbook_validation import audit_selected_page_coverage
+    result.extraction_audit_rows.extend(audit_selected_page_coverage(result))
 
     destination = (
         normalize_path(output_dir, allow_nonlocal_paths=allow_nonlocal_paths)
@@ -266,6 +337,7 @@ def extract_pdf_to_workbook(
         else path.parent
     )
     filename = build_output_filename(path, meta, statements)
+    report(progress, Stage.WRITING, "Saving the Excel workbook; keep the application open")
     output_path = write_extraction_workbook(
         result,
         destination / filename,
@@ -280,13 +352,20 @@ def extract_html_to_workbook(
     output_dir: str | None = None,
     *,
     allow_nonlocal_paths: bool = False,
+    progress: ProgressReporter | None = None,
 ) -> tuple[ExtractionResult, Path]:
+    report(progress, Stage.VALIDATING)
     path = normalize_path(html_path, allow_nonlocal_paths=allow_nonlocal_paths)
     if not path.exists():
         raise FileNotFoundError(path)
 
+    report(progress, Stage.EXTRACTING_TABLES, "Reading HTML and detecting statement tables")
     raw_text_rows, raw_table_cells, normalized_table_cells, extraction_audit, detected_metadata = extract_html_filing(path)
+    report(progress, Stage.PARSING, "Preserving statement labels and source-table layouts")
     statements, parsed_cells, parser_issues, unmapped = parse_financial_statements(raw_text_rows)
+    statement_tables, layout_issues = organize_source_tables(raw_table_cells, raw_text_rows, statements)
+    extraction_audit.extend(layout_issues)
+    report(progress, Stage.AUDITING, "Checking extracted statements and preparing output metadata")
     financial_audit = run_financial_audits(statements, parser_issues)
 
     meta = dict(detected_metadata)
@@ -318,6 +397,7 @@ def extract_html_to_workbook(
         parsed_cells=parsed_cells,
         financial_audit_rows=financial_audit,
         unmapped_rows=unmapped,
+        statement_tables=statement_tables,
     )
     destination = (
         normalize_path(output_dir, allow_nonlocal_paths=allow_nonlocal_paths)
@@ -325,6 +405,7 @@ def extract_html_to_workbook(
         else path.parent
     )
     filename = build_output_filename(path, meta, statements)
+    report(progress, Stage.WRITING, "Saving the Excel workbook; keep the application open")
     output_path = write_extraction_workbook(
         result,
         destination / filename,
@@ -340,6 +421,9 @@ def extract_filing_to_workbook(
     output_dir: str | None = None,
     *,
     allow_nonlocal_paths: bool = False,
+    page_policy: str = "review",
+    table_strategy: str = "adaptive",
+    progress: ProgressReporter | None = None,
 ) -> tuple[ExtractionResult, Path]:
     path = normalize_path(input_path, allow_nonlocal_paths=allow_nonlocal_paths)
     suffix = path.suffix.lower()
@@ -350,6 +434,9 @@ def extract_filing_to_workbook(
             metadata,
             output_dir,
             allow_nonlocal_paths=allow_nonlocal_paths,
+            page_policy=page_policy,
+            table_strategy=table_strategy,
+            progress=progress,
         )
     if suffix in HTML_SUFFIXES:
         return extract_html_to_workbook(
@@ -357,6 +444,7 @@ def extract_filing_to_workbook(
             metadata,
             output_dir,
             allow_nonlocal_paths=allow_nonlocal_paths,
+            progress=progress,
         )
     raise ValueError("Choose a PDF, HTML, HTM, or XHTML financial filing.")
 

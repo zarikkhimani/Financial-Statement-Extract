@@ -107,7 +107,7 @@ Net income 90 80
     statements, *_ = parse_financial_statements(text)
     df = statements["IncomeStatement"]
 
-    assert "Other income (expense)" in set(df.loc[df["RowType"] == "Section", "RawItem"])
+    assert "Other income (expense):" in set(df.loc[df["RowType"] == "Section", "RawItem"])
     interest = df[df["RawItem"] == "Interest expense"].iloc[0]
     assert interest["2026"] == -10
     assert interest["2025"] == -8
@@ -198,6 +198,28 @@ Professional fees 2 1
     df = statements["IncomeStatement"]
     assert {"Investment Income", "Expenses"}.issubset(set(df.loc[df["RowType"] == "Section", "RawItem"]))
     assert {"Interest income", "Professional fees"}.issubset(set(df.loc[df["RowType"] == "Data", "RawItem"]))
+
+
+def test_per_share_heading_stays_separate_from_earnings_and_share_counts():
+    text = """Example Fund
+Statements of Operations
+Three months ended June 30, Nine months ended June 30,
+2026 2025 2026 2025
+Net income 10 9 30 27
+Per Common Share Data
+Basic and diluted earnings (loss) per common share (Note 10) 0.22 0.34 0.29 1.05
+Dividends and distributions declared per common share 0.33 0.39 1.05 1.26
+Basic and diluted weighted average common shares outstanding (Note 10) 260,446,791 266,844,118 262,271,073 265,882,773
+"""
+    statements, *_ = parse_financial_statements(text)
+    frame = statements['IncomeStatement']
+    heading = frame[frame.RawItem == 'Per Common Share Data'].iloc[0]
+    assert heading.RowType == 'Section'
+    data = frame[frame.RowType == 'Data']
+    assert data.iloc[1].RawItem == 'Basic and diluted earnings (loss) per common share (Note 10)'
+    periods = frame.attrs['period_labels']
+    assert list(data.iloc[1][periods]) == [0.22, 0.34, 0.29, 1.05]
+    assert list(data.iloc[-1][periods]) == [260446791, 266844118, 262271073, 265882773]
 
 
 def test_wrapped_equity_description_with_dates_remains_one_row():
@@ -298,3 +320,20 @@ Ending balance 120 110
     assert set(statements) == {"IncomeStatement"}
     income = statements["IncomeStatement"]
     assert list(income.loc[income["RowType"] == "Data", "RawItem"]) == ["Revenue", "Net income"]
+
+
+def test_mixed_unit_note_preserves_reported_values_and_separate_share_metadata():
+    note = '(In millions, except number of shares, which are reflected in thousands, and par value)'
+    statements, cells, *_ = parse_financial_statements(
+        f'Example Company\nConsolidated Balance Sheets\n{note}\n2026 2025\n'
+        'Cash 35,934 29,943\nTotal assets 35,934 29,943\n')
+    balance = statements['BalanceSheet']
+    assert balance.attrs['raw_unit_note'] == note
+    assert balance.attrs['unit_label'] == 'millions'
+    assert balance.attrs['scale_factor'] == 1_000_000
+    assert balance.attrs['share_unit_label'] == 'thousands'
+    assert balance.attrs['share_scale_factor'] == 1_000
+    cash = balance[balance.RawItem == 'Cash'].iloc[0]
+    assert (cash['2026'], cash['2025']) == (35934, 29943)
+    assert all(c['reported_scale_factor'] == 1_000_000 for c in cells)
+    assert {c['parsed_value'] for c in cells} == {35934, 29943}

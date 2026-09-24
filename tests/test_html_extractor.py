@@ -148,8 +148,10 @@ def test_html_filing_runs_through_existing_excel_pipeline(tmp_path):
 
     workbook = load_workbook(output, read_only=True)
     try:
-        assert workbook.sheetnames == ["Income Statement", "Cash Flow", "Balance Sheet"]
-        assert workbook["Income Statement"]["A1"].value == "Acme Corporation"
+        assert workbook.sheetnames == ["Statement 1", "Statement 2", "Consolidated Balance Sheets", "Review"]
+        assert workbook["Statement 1"]["C4"].value == "Acme Corporation"
+        assert workbook["Statement 1"]["C5"].value == "Consolidated Statements of Income"
+        assert workbook["Statement 2"]["C5"].value == "Consolidated Statements of Cash Flows"
     finally:
         workbook.close()
 
@@ -173,31 +175,61 @@ def test_fund_html_detects_all_statements_and_preserves_structured_columns(tmp_p
     assert partners.loc[partners["RawItem"] == "Net Assets at December 31, 2025", "Total"].iloc[0] == 981
 
     schedule = result.statements["ScheduleOfInvestments"]
-    assert schedule.attrs["period_labels"] == ["Fair Value", "% of Net Assets"]
+    assert schedule.attrs["period_labels"] == ["Fair Value", "Fair Value as a Percentage of Net Assets"]
     assert not any("Fair Value as a Percentage" in str(item) for item in schedule["RawItem"])
     assert "Discounted Cash Flow" not in " ".join(schedule["RawItem"])
     assert schedule.loc[schedule["RawItem"].str.contains("Total Investments"), "Fair Value"].iloc[0] == 1349
 
     workbook = load_workbook(output, read_only=True)
     try:
-        assert workbook.sheetnames == [
-            "Income Statement",
-            "Cash Flow",
-            "Balance Sheet",
-            "Partners Capital",
-            "Schedule of Investments",
-        ]
-        schedule_sheet = workbook["Schedule of Investments"]
+        assert workbook.sheetnames == [f"Statement {n}" for n in range(1, 6)] + ["Review"]
+        assert all(sheet["C5"].value is None for sheet in workbook if sheet.title != "Review")
+        schedule_sheet = workbook["Statement 5"]
         percent_column = next(
             cell.column
-            for cell in schedule_sheet[5]
-            if cell.value == "% of Net Assets"
+            for cell in schedule_sheet[8][2:]
+            if cell.value == "Fair Value as a Percentage of Net Assets"
         )
         percent_cell = next(
             schedule_sheet.cell(row=row, column=percent_column)
-            for row in range(6, schedule_sheet.max_row + 1)
+            for row in range(9, schedule_sheet.max_row + 1)
             if schedule_sheet.cell(row=row, column=percent_column).value is not None
         )
-        assert percent_cell.number_format == "0.0%;(0.0%);-"
+        assert "%" in percent_cell.number_format
+        assert percent_cell.value == 0.467
+        assert schedule_sheet.cell(percent_cell.row, 4).value == "Equity"
+        assert schedule_sheet.cell(percent_cell.row, 5).value == "Americas"
     finally:
         workbook.close()
+
+
+def test_html_note_markers_and_duplicate_source_rows_are_not_removed(tmp_path):
+    source = tmp_path / "notes.htm"
+    html = SEC_HTML.replace("<td>Revenue</td>", "<td>Revenue<sup>(3)</sup></td>")
+    repeated_row = "<tr><td>Other income (4)</td><td>2</td><td>1</td></tr>"
+    html = html.replace("<tr><td>Cost of sales</td>", repeated_row * 2 + "<tr><td>Cost of sales</td>")
+    source.write_text(html, encoding="utf-8")
+    result, _ = extract_filing_to_workbook(str(source), output_dir=str(tmp_path))
+    labels = list(result.statements["IncomeStatement"].RawItem)
+    assert "Revenue (3)" in labels
+    assert labels.count("Other income (4)") == 2
+
+
+def test_html_continuation_tables_are_grouped_and_notes_are_excluded(tmp_path):
+    source = tmp_path / "continuations.html"
+    source.write_text("""<html><body><h2>Statements of Cash Flows</h2>
+    <table><tr><td>2026</td><td>2025</td></tr>
+    <tr><td>Net income</td><td>10</td><td>9</td></tr>
+    <tr><td>Net cash from operating activities</td><td>20</td><td>18</td></tr></table>
+    <table><tr><td>2026</td><td>2025</td></tr>
+    <tr><td>Net cash from financing activities</td><td>5</td><td>4</td></tr>
+    <tr><td>Cash and cash equivalents at end of period</td><td>100</td><td>90</td></tr></table>
+    <h2>Notes to Financial Statements</h2>
+    <table><tr><td>2026</td><td>2025</td></tr>
+    <tr><td>Net income</td><td>999</td><td>888</td></tr>
+    <tr><td>Revenue</td><td>9999</td><td>8888</td></tr></table>
+    </body></html>""", encoding="utf-8")
+    rows, cells, _, _, _ = extract_html_filing(source)
+    assert {row["table_id"] for row in cells} == {"HTML_0001", "HTML_0002"}
+    assert any("financing activities" in row["raw_text"] for row in rows)
+    assert not any("999" in row["raw_text"] for row in rows)

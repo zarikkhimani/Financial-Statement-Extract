@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import re
+import math
 from typing import Optional
 
 import pandas as pd
 
 
 def _period_columns(df: pd.DataFrame) -> list[str]:
-    fixed = {"RowType", "Category", "SubCategory", "RawItem", "StandardItem", "MappingConfidence", "MappingRule", "Context", "Note", "SourcePage", "SourceLine"}
+    fixed = {"RowType", "Category", "SubCategory", "RawItem", "StandardItem", "MappingConfidence", "MappingRule", "Context", "Note", "SourcePage", "SourceLine", "InternalID", "AnalyticalFamily", "MappingRelationship"}
     return [c for c in df.columns if c not in fixed]
 
 
@@ -15,10 +16,12 @@ def _series_value(df: pd.DataFrame, item: str, period: str) -> Optional[float]:
     if df.empty or "StandardItem" not in df.columns or period not in df.columns:
         return None
     rows = df[df["StandardItem"].astype(str).str.strip().str.lower() == item.lower()]
-    if rows.empty:
+    if "MappingRelationship" in rows.columns:
+        rows = rows[rows["MappingRelationship"] == "exact_concept"]
+    if len(rows) != 1:
         return None
     value = pd.to_numeric(rows.iloc[0][period], errors="coerce")
-    return None if pd.isna(value) else float(value)
+    return None if pd.isna(value) or not math.isfinite(value) else float(value)
 
 
 def _tolerance(*values: Optional[float]) -> float:
@@ -101,9 +104,11 @@ def audit_duplicates(statements: dict[str, pd.DataFrame]) -> list[dict]:
         if df.empty or "StandardItem" not in df.columns:
             continue
         mapped = df[(df["MappingRule"] != "unmapped") & (df["MappingRule"] != "section") & df["StandardItem"].astype(str).str.strip().ne("")]
+        if "MappingRelationship" in mapped:
+            mapped = mapped[mapped["MappingRelationship"] == "exact_concept"]
         counts = mapped["StandardItem"].value_counts()
         for item, count in counts[counts > 1].items():
-            rows.append({"Check": "Duplicate mapped concept", "Scope": statement_type, "Status": "WARN", "Detail": f"'{item}' appears {int(count)} times."})
+            rows.append({"Check": "Duplicate mapped concept", "Scope": statement_type, "Status": "WARN", "Detail": f"'{item}' has {int(count)} exact mappings. This can represent separate sections; a unique value is required for equation checks."})
     return rows
 
 
@@ -114,12 +119,11 @@ def audit_cross_statement(statements: dict[str, pd.DataFrame]) -> list[dict]:
     is_df = statements.get("IncomeStatement")
 
     if bs is not None and cf is not None and not bs.empty and not cf.empty:
-        bs_map = {_year(p): p for p in _period_columns(bs)}
-        cf_map = {_year(p): p for p in _period_columns(cf)}
+        # A year alone must never pair September balances with June cash flows.
+        bs_map = {str(p).strip().casefold(): p for p in _period_columns(bs)}
+        cf_map = {str(p).strip().casefold(): p for p in _period_columns(cf)}
         for yr in sorted(set(bs_map) & set(cf_map), reverse=True):
             bs_cash = _series_value(bs, "Cash and Cash Equivalents", bs_map[yr])
-            if bs_cash is None:
-                bs_cash = _series_value(bs, "Cash", bs_map[yr])
             cf_cash = _series_value(cf, "Cash and Cash Equivalents at End of Period", cf_map[yr])
             if bs_cash is None or cf_cash is None:
                 rows.append({"Check": "CF ending cash = BS cash", "Scope": yr, "Status": "NOT_TESTED", "Detail": "Required cash line missing in one statement."})
@@ -129,8 +133,8 @@ def audit_cross_statement(statements: dict[str, pd.DataFrame]) -> list[dict]:
             rows.append({"Check": "CF ending cash = BS cash", "Scope": yr, "Status": _status_from_diff(diff, tol), "Detail": f"Difference={diff:.6g}; tolerance={tol:.6g}."})
 
     if is_df is not None and cf is not None and not is_df.empty and not cf.empty:
-        is_map = {_year(p): p for p in _period_columns(is_df)}
-        cf_map = {_year(p): p for p in _period_columns(cf)}
+        is_map = {str(p).strip().casefold(): p for p in _period_columns(is_df)}
+        cf_map = {str(p).strip().casefold(): p for p in _period_columns(cf)}
         for yr in sorted(set(is_map) & set(cf_map), reverse=True):
             is_ni = _series_value(is_df, "Net Income (Loss)", is_map[yr])
             cf_ni = _series_value(cf, "Net Income (Loss)", cf_map[yr])
@@ -150,20 +154,32 @@ def audit_units(statements: dict[str, pd.DataFrame]) -> list[dict]:
             units[name] = (df.attrs.get("unit_label", "reported units"), df.attrs.get("currency", ""))
     known = {v for v in units.values() if v[0] != "reported units" or v[1]}
     detail = "; ".join(f"{k}={v[0]} {v[1]}".strip() for k, v in units.items()) or "No parsed statements."
-    if len(known) <= 1:
+    if not known or len(known) == 1 and any(v[0] in ('reported units', '', None) for v in units.values()):
+        return [{"Check": "Statement unit consistency", "Scope": "All statements", "Status": "NOT_TESTED", "Detail": detail + "; one or more unit scales are unknown."}]
+    if len(known) == 1:
         return [{"Check": "Statement unit consistency", "Scope": "All statements", "Status": "PASS" if units else "NOT_TESTED", "Detail": detail}]
     return [{"Check": "Statement unit consistency", "Scope": "All statements", "Status": "WARN", "Detail": detail}]
 
 
 def run_financial_audits(statements: dict[str, pd.DataFrame], parser_issues: list[dict]) -> list[dict]:
-    rows = list(parser_issues)
+    from financial_statement_extract.workbook_validation import recovered_tables, audit_recovered_statement
+    rows = [dict(row, Detail="Text-parser diagnostic; exported table checks are listed separately. " + row.get("Detail", ""))
+            if row.get('Check') == 'Period-count alignment' else dict(row) for row in parser_issues]
     bs = statements.get("BalanceSheet")
     cf = statements.get("CashFlowStatement")
-    if bs is not None and not bs.empty:
+    recovered = {kind: recovered_tables(frame, kind) for kind, frame in statements.items()}
+    for kind, tables in recovered.items():
+        if tables:
+            rows.extend(audit_recovered_statement(kind, tables))
+    if bs is not None and not bs.empty and not recovered.get('BalanceSheet'):
         rows.extend(audit_balance_sheet(bs))
-    if cf is not None and not cf.empty:
+    if cf is not None and not cf.empty and not recovered.get('CashFlowStatement'):
         rows.extend(audit_cash_flow(cf))
-    rows.extend(audit_cross_statement(statements))
-    rows.extend(audit_duplicates(statements))
+    if recovered.get('CashFlowStatement'):
+        from financial_statement_extract.workbook_validation import audit_source_cross_statement
+        rows.extend(audit_source_cross_statement(statements))
+    else:
+        rows.extend(audit_cross_statement(statements))
+    rows.extend(audit_duplicates({k: v for k, v in statements.items() if not recovered.get(k)}))
     rows.extend(audit_units(statements))
     return rows

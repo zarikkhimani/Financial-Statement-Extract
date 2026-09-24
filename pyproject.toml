@@ -72,7 +72,7 @@ where = ["."]
 include = ["financial_statement_extract*"]
 
 [tool.setuptools.package-data]
-financial_statement_extract = ["py.typed"]
+financial_statement_extract = ["py.typed", "assets/*.png", "assets/*.ico"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

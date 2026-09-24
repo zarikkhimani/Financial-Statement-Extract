@@ -8,14 +8,9 @@ import camelot
 import pdfplumber
 
 from normalization import normalize_financial_text, parse_numeric_token
-from structure import detect_statement_heading_type
 
 logger = logging.getLogger(__name__)
 
-AUTO_STATEMENT_TYPES = ("IncomeStatement", "CashFlowStatement", "BalanceSheet")
-_FINANCIAL_NUMBER_RE = re.compile(
-    r"\(?\s*\$?\s*-?\d[\d,]*(?:\.\d+)?%?\s*\)?|(?<!\w)[\u2013\u2014\u2212-](?!\w)"
-)
 
 def parse_page_numbers(pages_str: str, max_pages: int) -> list[int]:
     text = (pages_str or "").strip().lower()
@@ -50,17 +45,6 @@ def get_page_count(pdf_path: str | Path) -> int:
     with pdfplumber.open(str(pdf_path)) as pdf:
         return len(pdf.pages)
 
-def _page_statement_types(text: str) -> set[str]:
-    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
-    return {
-        statement_type
-        for line in lines[:30]
-        # A statement name ending a prose sentence is a note reference, not a
-        # standalone page heading. SEC statement headings conventionally omit
-        # terminal periods, including when followed by "(unaudited)".
-        if not line.endswith(".")
-        if (statement_type := detect_statement_heading_type(line))
-    }
 
 
 def get_pdf_document_type(pdf_path: str | Path) -> str:
@@ -82,95 +66,19 @@ def get_pdf_document_type(pdf_path: str | Path) -> str:
     return ""
 
 
-def _financial_data_line_count(text: str) -> int:
-    count = 0
-    for line in (text or "").splitlines():
-        if not re.search(r"[A-Za-z]", line):
-            continue
-        if len(_FINANCIAL_NUMBER_RE.findall(line)) >= 2:
-            count += 1
-    return count
-
-
-def _statement_page_is_complete(statement_type: str, text: str) -> bool:
-    low = normalize_financial_text(text).lower()
-    if statement_type == "CashFlowStatement":
-        return any(marker in low for marker in (
-            "cash and cash equivalents, end of",
-            "cash and cash equivalents at end of",
-            "cash, cash equivalents and restricted cash, end of",
-        ))
-    if statement_type == "BalanceSheet":
-        return (
-            "total liabilities and equity" in low
-            or "total liabilities and stockholders" in low
-            or "total liabilities and shareholders" in low
-            or "net assets consist of" in low
-        )
-    if statement_type == "IncomeStatement":
-        return (
-            "total comprehensive income" in low
-            or "net increase in net assets resulting from operations" in low
-            or (("net income" in low or "net earnings" in low) and "diluted" in low)
-        )
-    return True
 
 
 def select_auto_statement_pages(page_texts: list[str]) -> list[int]:
-    """Return one-based core financial-statement pages, including continuations."""
-    candidates: list[dict] = []
-    for page_number, text in enumerate(page_texts, start=1):
-        data_lines = _financial_data_line_count(text)
-        if data_lines < 4:
-            continue
-        for statement_type in _page_statement_types(text):
-            if statement_type not in AUTO_STATEMENT_TYPES:
-                continue
-            candidates.append({
-                "page": page_number,
-                "type": statement_type,
-                "data_lines": data_lines,
-            })
-
-    selected: dict[str, dict] = {}
-    for statement_type in AUTO_STATEMENT_TYPES:
-        type_candidates = [item for item in candidates if item["type"] == statement_type]
-        if not type_candidates:
-            continue
-
-        def rank(item: dict) -> tuple[int, int, int]:
-            nearby_types = {
-                other["type"]
-                for other in candidates
-                if other["type"] != statement_type and abs(other["page"] - item["page"]) <= 15
-            }
-            return len(nearby_types), item["data_lines"], -item["page"]
-
-        selected[statement_type] = max(type_candidates, key=rank)
-
-    pages = {item["page"] for item in selected.values()}
-    for statement_type, item in selected.items():
-        page_number = item["page"]
-        if _statement_page_is_complete(statement_type, page_texts[page_number - 1]):
-            continue
-        for continuation_page in range(page_number + 1, min(len(page_texts), page_number + 2) + 1):
-            continuation_text = page_texts[continuation_page - 1]
-            next_types = _page_statement_types(continuation_text)
-            if next_types and statement_type not in next_types:
-                break
-            if _financial_data_line_count(continuation_text) < 2:
-                break
-            pages.add(continuation_page)
-            if _statement_page_is_complete(statement_type, continuation_text):
-                break
-
-    return sorted(pages)
+    """Return discrete statement pages, including equity and investment schedules."""
+    from financial_statement_extract.detection import detect_statement_plan
+    return list(detect_statement_plan(page_texts).selected_pages)
 
 
 def auto_detect_statement_pages(pdf_path: str | Path) -> list[int]:
-    with pdfplumber.open(str(pdf_path)) as pdf:
-        page_texts = [page.extract_text() or "" for page in pdf.pages]
-    return select_auto_statement_pages(page_texts)
+    from financial_statement_extract.pdf_detection import scan_pdf_statements
+    plan, _, _ = scan_pdf_statements(Path(pdf_path))
+    from financial_statement_extract.page_selection import resolve_page_plan
+    return list(resolve_page_plan(plan, "review").selected_pages)
 
 
 def format_page_numbers(page_numbers: list[int]) -> str:
@@ -285,6 +193,8 @@ def extract_tables_camelot(pdf_path: str | Path, pages_str: str) -> tuple[list[d
                 selected = flavor == best_flavor
                 table_id = f"P{page_no:04d}_{flavor.upper()}_{table_idx:02d}"
                 score = round(_table_score(table), 3)
+                row_bounds = getattr(table, "rows", [])
+                column_bounds = getattr(table, "cols", [])
                 for r_idx, row in table.df.iterrows():
                     for c_idx, value in row.items():
                         raw = "" if value is None else str(value)
@@ -300,6 +210,10 @@ def extract_tables_camelot(pdf_path: str | Path, pages_str: str) -> tuple[list[d
                             "row_index": int(r_idx),
                             "column_index": int(c_idx),
                             "raw_text": raw,
+                            # Camelot coordinates use a bottom-left PDF origin.
+                            # Keep geometry as evidence for overlapping candidates.
+                            "row_bounds": list(row_bounds[r_idx]) if len(row_bounds) > r_idx else None,
+                            "column_bounds": list(column_bounds[c_idx]) if len(column_bounds) > c_idx else None,
                         })
                         if selected:
                             token = parse_numeric_token(raw)
@@ -344,7 +258,17 @@ def extract_tables_pdfplumber(pdf_path: str | Path, pages_str: str) -> tuple[lis
         for idx in page_indices:
             page_no = idx + 1
             try:
-                tables = pdf.pages[idx].extract_tables() or []
+                page = pdf.pages[idx]
+                found = page.find_tables()
+                tables = [table.extract() for table in found]
+                from structure import detect_statement_heading_type
+                is_equity = any(detect_statement_heading_type(line) == "StockholdersEquityStatement"
+                                for line in (page.extract_text() or "").splitlines()[:25])
+                if is_equity:
+                    from financial_statement_extract.pdf_layout import equity_grid
+                    grid = equity_grid(page, found)
+                    if grid:
+                        tables = [grid]
             except Exception as exc:
                 audit.append({
                     "Check": "PDFPlumber table extraction",

@@ -43,3 +43,17 @@ def test_extract_filing_delegates_to_the_pipeline(monkeypatch, tmp_path):
         "output_dir": str(tmp_path),
         "allow_nonlocal_paths": True,
     }
+
+
+def test_progress_reporter_is_forwarded_only_when_supplied(monkeypatch):
+    calls = []
+    def runner(*args, **kwargs):
+        calls.append(kwargs)
+        return None, Path("not-created.xlsx")
+    monkeypatch.setattr(pipeline, "extract_filing_to_workbook", runner)
+    events = []
+    reporter = events.append
+    financial_statement_extract.extract_filing("sample.pdf", progress=reporter)
+    financial_statement_extract.extract_filing("sample.pdf")
+    assert calls[0]["progress"] is reporter
+    assert "progress" not in calls[1]

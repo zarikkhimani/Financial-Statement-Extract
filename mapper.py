@@ -29,6 +29,20 @@ def map_concept(statement_type: str, raw_item: str, context: str = "") -> Mappin
     if not raw_norm:
         return MappingResult(raw_item, raw_item, "", "", 0.0, "unmapped")
 
+    # A shared analytical role does not make these two accounting terms synonyms.
+    operation_result = re.fullmatch(
+        r"net (?:increase|decrease|increase \(decrease\)|decrease \(increase\)) "
+        r"in net assets (?:resulting )?from operations", raw_norm,
+    )
+    if operation_result and statement_type in {
+        "IncomeStatement", "CashFlowStatement", "PartnersCapital", "StockholdersEquityStatement",
+    }:
+        return MappingResult(
+            raw_item, "Investment-company change in net assets from operations",
+            "Investment Results", "Period Result", 1.0, "exact_alias",
+            "investment_company_net_increase_from_operations", "period_result", "exact_concept",
+        )
+
     best = None
     best_score = 0.0
     best_rule_name = "unmapped"
@@ -74,6 +88,11 @@ def map_concept(statement_type: str, raw_item: str, context: str = "") -> Mappin
     if best is None or best_score < 0.70:
         return MappingResult(raw_item, raw_item, "", "", 0.0, "unmapped")
 
+    corporate_result = best.standard_name == "Net Income (Loss)"
+    internal_id = (
+        "corporate_net_income" if corporate_result
+        else statement_type + ":" + re.sub(r"[^a-z0-9]+", "_", best.standard_name.lower()).strip("_")
+    )
     return MappingResult(
         raw_item=raw_item,
         standard_item=best.standard_name,
@@ -81,4 +100,7 @@ def map_concept(statement_type: str, raw_item: str, context: str = "") -> Mappin
         subcategory=best.subcategory,
         confidence=round(best_score, 3),
         rule=best_rule_name,
+        internal_id=internal_id,
+        analytical_family="period_result" if corporate_result else best.category,
+        relationship="exact_concept" if best_rule_name == "exact_alias" else "related",
     )
