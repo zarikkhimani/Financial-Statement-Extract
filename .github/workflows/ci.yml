@@ -27,8 +27,17 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
+      # Bootstrap trust before package-index access: https://discuss.python.org/t/109576
+      - name: Bootstrap pip with verified certificates
+        run: >-
+          python -m pip --isolated --disable-pip-version-check --no-cache-dir install --no-index --no-deps --upgrade
+          "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
+
+      - name: Update packaging and certificate bundle
+        run: python -m pip install --upgrade "pip>=26.2.2" "certifi>=2026.10.19"
+
       - name: Install project and development tools
-        run: python -m pip install --upgrade pip && python -m pip install --editable ".[dev]"
+        run: python -m pip install --editable ".[dev]"
 
       - name: Check dependencies
         run: python -m pip check
