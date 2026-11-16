@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "artifacts": [
+    {
+      "file": "TC01.json.gz",
+      "sha256": "6e09b61a5c4f9e88d2a9e844e752b902c86e52f44be258969f5cfc2a286d8992",
+      "bytes": 27742
+    },
+    {
+      "file": "TC02.json.gz",
+      "sha256": "8937e8fbc33e33b5d4ce4e7ff56fc574bd481aa7800a5cff97f8cb5abfae1937",
+      "bytes": 9245
+    },
+    {
+      "file": "TC03.json.gz",
+      "sha256": "a81a0a2101cceb666bdb3536a188892f50ae48a64c47138c6a341905291ffaea",
+      "bytes": 14134
+    },
+    {
+      "file": "TC04.json.gz",
+      "sha256": "791de508390997aa086ccc013d3e22af0a7b718cb05d5bde6c104f85a718615f",
+      "bytes": 30662
+    },
+    {
+      "file": "TC05.json.gz",
+      "sha256": "76176dcae6be6eb929b11803d00218beb119ac8ed06e7691aec14d8646afb86e",
+      "bytes": 9251
+    },
+    {
+      "file": "TC06.json.gz",
+      "sha256": "047bb5b046781a353f6bc1e0e76eb95d1f80efdcba49b06a5174dda566667bb6",
+      "bytes": 11718
+    },
+    {
+      "file": "TC07.json.gz",
+      "sha256": "433f9f79d3204bf62dfadbfea3b3c0209b61875385fb715397d2c26763b74a97",
+      "bytes": 12995
+    },
+    {
+      "file": "controls.json.gz",
+      "sha256": "5b1142995b27adcc98ea4625db4f913f0124dd8be1aa7672d968d6b0d1c49cc4",
+      "bytes": 10998
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "TC01",
+      "expected_rows": 25,
+      "source_pages": [
+        199
+      ],
+      "source_reference_sha256": "33e7c3b2548baeb5ed92ee7b3321dc7ca5b3a4a1ef7430f8da62feebecc6a7bf",
+      "blank_annotation": null,
+      "excluded_source_header_ids": []
+    },
+    {
+      "case_id": "TC02",
+      "expected_rows": 14,
+      "source_pages": [
+        111
+      ],
+      "source_reference_sha256": "41636f4b1cde948e5f1264a81da80593d27b8547afa5109a2cb3c3659ce47f6b",
+      "blank_annotation": "PDF page 111: the 2023 income-tax expense/benefit cell is visibly blank. Preserve it as blank, not zero.",
+      "excluded_source_header_ids": []
+    },
+    {
+      "case_id": "TC03",
+      "expected_rows": 26,
+      "source_pages": [
+        96
+      ],
+      "source_reference_sha256": "0e25907a2957cc864f67ae56875204bee9ea83ceb50b058b61a67cfffc4b4f8a",
+      "blank_annotation": null,
+      "excluded_source_header_ids": []
+    },
+    {
+      "case_id": "TC04",
+      "expected_rows": 37,
+      "source_pages": [
+        7,
+        8
+      ],
+      "source_reference_sha256": "f657ee0b5e4d5cbb3e55ae5da2669024d1b49d538bd67f1047e033bc96edb678",
+      "blank_annotation": null,
+      "excluded_source_header_ids": []
+    },
+    {
+      "case_id": "TC05",
+      "expected_rows": 15,
+      "source_pages": [
+        8
+      ],
+      "source_reference_sha256": "ef5a01c9eb91076d1b6d6de5a905d10344fb71191c86a293ea1223f586c65af0",
+      "blank_annotation": null,
+      "excluded_source_header_ids": []
+    },
+    {
+      "case_id": "TC06",
+      "expected_rows": 14,
+      "source_pages": [
+        162
+      ],
+      "source_reference_sha256": "5ada266e1f6174bbf711849a9436f70dd95f443d76d5af8cb34e57b99277b730",
+      "blank_annotation": null,
+      "excluded_source_header_ids": []
+    },
+    {
+      "case_id": "TC07",
+      "expected_rows": 41,
+      "source_pages": [
+        54
+      ],
+      "source_reference_sha256": "3dc050a1050d0fe95084d7622d8df3c5fcde32a72647df2830134592eb52fbca",
+      "blank_annotation": null,
+      "excluded_source_header_ids": [
+        "p54:l6:cash_flow_statement"
+      ]
+    }
+  ],
+  "provenance": "Source inputs and reviewed expectations captured during table-completeness Phase 3; no PDFs or absolute workstation paths required at test runtime."
+}

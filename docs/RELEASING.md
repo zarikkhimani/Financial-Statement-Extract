@@ -19,6 +19,15 @@ tags, and publication require an explicit request.
 
 ## Validate
 
+For extractor acceptance, first complete the
+[local collection acceptance command](REGRESSION_RELEASE.md). It checks the
+entire prepared PDF suite against the active approved numeric reference and
+runs the repository checks below. A passing subset or a cached report from a
+different program version is insufficient. Source-supported corrections must
+be recorded before a new baseline is promoted. This collection decision does
+not replace the clean-installation, UI, accessibility, security or publication
+requirements in this guide.
+
 Run the project checks from the repository environment:
 
 ```powershell

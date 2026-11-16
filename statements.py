@@ -174,6 +174,25 @@ def _extract_note_from_description(desc: str) -> tuple[str, str]:
     return desc.strip(), ""
 
 
+def _income_amounts_in_label(description: str) -> bool:
+    """Flag excess trailing amount tokens without consuming legitimate label notes."""
+    remaining, tokens = description, []
+    while len(tokens) < 2:
+        match = re.search(rf"(?:^|\s)({VALUE_TOKEN})\s*$", remaining, re.IGNORECASE)
+        if not match:
+            break
+        token = match.group(1).strip()
+        prefix = remaining[:match.start()].rstrip()
+        if not tokens and re.fullmatch(r"\(\d{1,3}\)", token):
+            remaining = prefix
+            continue
+        if not tokens and re.search(r"\b(?:note|notes)\s*$", prefix, re.I):
+            return False
+        tokens.append(token)
+        remaining = prefix
+    return len(tokens) > 1 or bool(tokens and not re.fullmatch(r"(?:19|20)\d{2}", tokens[0]))
+
+
 def _condense_lines(section_rows: list[dict], n_periods: int, statement_type: str) -> list[dict]:
     output: list[dict] = []
     acc_text: list[str] = []
@@ -194,6 +213,10 @@ def _condense_lines(section_rows: list[dict], n_periods: int, statement_type: st
     for row in section_rows:
         text = normalize_financial_text(row.get("raw_text", ""))
         if not text:
+            continue
+        if statement_type == "IncomeStatement" and "income_value_tokens" in row:
+            flush_acc()
+            output.append(row)
             continue
         if statement_type == "BalanceSheet":
             balance_context = section_hint_for_line(text, balance_context)
@@ -258,11 +281,17 @@ def _condense_lines(section_rows: list[dict], n_periods: int, statement_type: st
 
     flush_acc()
     return output
-def _parse_statement_section(statement_type: str, section_rows: list[dict], company_name: str) -> tuple[pd.DataFrame, list[dict], list[dict]]:
+def _parse_statement_section(statement_type: str, section_rows: list[dict], company_name: str,
+                             *, recover_income_periods: bool = True) -> tuple[pd.DataFrame, list[dict], list[dict]]:
+    income_layout = None
     if statement_type == "ScheduleOfInvestments":
         period_labels = detect_schedule_value_headers(section_rows) or detect_period_labels(section_rows)
     elif statement_type == "PartnersCapital":
         period_labels = detect_partners_capital_value_headers(section_rows) or detect_period_labels(section_rows)
+    elif statement_type == "IncomeStatement" and recover_income_periods:
+        from financial_statement_extract.income_periods import resolve_income_periods
+        income_layout = resolve_income_periods(section_rows)
+        period_labels = income_layout.labels
     else:
         period_labels = detect_period_labels(section_rows)
     unit_info = detect_statement_unit_note(section_rows)
@@ -275,6 +304,13 @@ def _parse_statement_section(statement_type: str, section_rows: list[dict], comp
     parsed_rows: list[dict] = []
     parsed_cells: list[dict] = []
     issues: list[dict] = []
+    if income_layout and income_layout.warning:
+        issues.append({"Check": "Statement period detection", "Scope": statement_type, "Status": "WARN",
+                       "Detail": income_layout.warning})
+    for row in section_rows:
+        if row.get("income_row_warning"):
+            issues.append({"Check": "Period-count alignment", "Scope": f"Page {row.get('source_page')} line {row.get('line_no')}",
+                           "Status": "WARN", "Detail": row["income_row_warning"] + " " + row["raw_text"]})
 
     if not period_labels:
         issues.append({
@@ -287,7 +323,9 @@ def _parse_statement_section(statement_type: str, section_rows: list[dict], comp
 
     n_periods = len(period_labels)
     current_context = "GENERAL"
-    condensed = _condense_lines(section_rows, n_periods, statement_type)
+    body_rows = [row for index, row in enumerate(section_rows)
+                 if not income_layout or index not in income_layout.header_indices]
+    condensed = _condense_lines(body_rows, n_periods, statement_type)
 
     for row_idx, row in enumerate(condensed, start=1):
         text = normalize_financial_text(row.get("raw_text", ""))
@@ -317,6 +355,8 @@ def _parse_statement_section(statement_type: str, section_rows: list[dict], comp
             continue
 
         matched = _match_desc_first(text, n_periods)
+        if income_layout and "income_value_tokens" in row:
+            matched = (row["income_label"], row["income_value_tokens"])
         source_order = "description_first"
         if not matched and statement_type == "CashFlowStatement":
             matched = _match_value_first(text, n_periods)
@@ -335,6 +375,10 @@ def _parse_statement_section(statement_type: str, section_rows: list[dict], comp
             continue
 
         raw_desc, raw_values = matched
+        if income_layout and _income_amounts_in_label(raw_desc):
+            issues.append({"Check": "Period-count alignment", "Scope": f"{statement_type} row {row_idx}",
+                           "Status": "WARN", "Detail": f"Possible extra source amounts remain in the label; "
+                           f"the {n_periods} detected reporting columns require review: {text}"})
         mapping_desc, note = _extract_note_from_description(raw_desc)
         if not raw_desc:
             continue
@@ -416,10 +460,16 @@ def _parse_statement_section(statement_type: str, section_rows: list[dict], comp
             "period_labels": period_labels,
             **unit_info,
         })
+        if income_layout and income_layout.evidence:
+            df.attrs["period_header_evidence"] = income_layout.evidence
+        row_evidence = [r["income_row_evidence"] for r in section_rows if r.get("income_row_evidence")]
+        if row_evidence:
+            df.attrs["period_row_evidence"] = row_evidence
     return df, parsed_cells, issues
 
 
-def parse_financial_statements(text_rows: Iterable[dict] | str) -> tuple[dict[str, pd.DataFrame], list[dict], list[dict], list[dict]]:
+def parse_financial_statements(text_rows: Iterable[dict] | str, *, recover_income_periods: bool = True
+                              ) -> tuple[dict[str, pd.DataFrame], list[dict], list[dict], list[dict]]:
     if isinstance(text_rows, str):
         lines = [
             {"source_page": None, "line_no": idx, "raw_text": line, "normalized_text": normalize_financial_text(line)}
@@ -440,7 +490,8 @@ def parse_financial_statements(text_rows: Iterable[dict] | str) -> tuple[dict[st
             issues.append({"Check": "Equity column layout", "Scope": statement_type, "Status": "NOT_TESTED",
                            "Detail": "Equity requires source table columns; the text-only parser does not infer them from dates."})
             continue
-        df, cells, section_issues = _parse_statement_section(statement_type, section_rows, company_name)
+        df, cells, section_issues = _parse_statement_section(statement_type, section_rows, company_name,
+                                                           recover_income_periods=recover_income_periods)
         parsed_cells.extend(cells)
         issues.extend(section_issues)
         if df.empty:

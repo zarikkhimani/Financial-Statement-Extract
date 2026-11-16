@@ -294,6 +294,8 @@ def extract_pdf_to_workbook(
         parser_rows = statement_rows_from_plan(raw_text_rows, page_plan)
     else:
         parser_rows = raw_text_rows
+    from financial_statement_extract.income_periods import prepare_income_parser_rows
+    parser_rows = prepare_income_parser_rows(path, parser_rows)
     statements, parsed_cells, parser_issues, unmapped = parse_financial_statements(parser_rows)
     statement_tables, layout_issues = organize_source_tables(raw_table_cells, parser_rows, statements, page_plan)
     from financial_statement_extract.balance_layout import recover_pdf_balance_tables
@@ -302,6 +304,22 @@ def extract_pdf_to_workbook(
     from financial_statement_extract.equity_layout import recover_pdf_equity_tables
     statement_tables, equity_issues = recover_pdf_equity_tables(path, statement_tables, statements, page_plan)
     layout_issues.extend(equity_issues)
+    # More tokens alone can still produce a less usable grid (for example a
+    # lattice cell containing an entire period). Change raw candidate preference
+    # only after the complete statement display has passed source recovery.
+    from financial_statement_extract.candidate_selection import preserve_complete_candidates, normalize_selected_cells
+    completeness_pages = {t["source_page"] for t in statement_tables
+                          if t.get("flavor") in {"equity_geometry", "cash_flow_text"}
+                          and t["source_page"] in fallback_pages}
+    selection_issues = preserve_complete_candidates(raw_table_cells, raw_text_rows, completeness_pages)
+    if selection_issues:
+        normalized_table_cells = normalize_selected_cells(raw_table_cells)
+        table_audit.extend(selection_issues)
+        for table in statement_tables:
+            if table["source_page"] in completeness_pages:
+                table["source_table_ids"] = list(dict.fromkeys(
+                    r["table_id"] for r in raw_table_cells
+                    if r.get("selected") and r["source_page"] == table["source_page"]))
     table_audit.extend(layout_issues)
     incomplete = set(page_plan.selected_pages) - covered_pages(raw_table_cells, raw_text_rows)
     if incomplete:
@@ -385,7 +403,7 @@ def extract_html_to_workbook(
     report(progress, Stage.EXTRACTING_TABLES, "Reading HTML and detecting statement tables")
     raw_text_rows, raw_table_cells, normalized_table_cells, extraction_audit, detected_metadata = extract_html_filing(path)
     report(progress, Stage.PARSING, "Preserving statement labels and source-table layouts")
-    statements, parsed_cells, parser_issues, unmapped = parse_financial_statements(raw_text_rows)
+    statements, parsed_cells, parser_issues, unmapped = parse_financial_statements(raw_text_rows, recover_income_periods=False)
     statement_tables, layout_issues = organize_source_tables(raw_table_cells, raw_text_rows, statements)
     extraction_audit.extend(layout_issues)
     report(progress, Stage.AUDITING, "Checking extracted statements and preparing output metadata")

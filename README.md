@@ -19,6 +19,28 @@ An optional [PyMuPDF comparison](docs/PYMUPDF_COMPARISON.md) adds independent
 table grids and timing diagnostics through `--compare-pymupdf` in the CLI or
 `compare_pymupdf=True` in the Python API.
 
+## Recent improvements
+
+- Fixed income-statement layouts that left figures in row labels instead of
+  numeric cells.
+- Corrected quarterly and year-to-date columns when the header repeats the
+  same year.
+- Recovered later rows and ending balances in seven confirmed table-cutoff
+  cases, including Sixth Street.
+- Added regression checks across the PDF collection to flag changes that
+  break previously working results.
+
+Earlier income-statement testing verified 1,174 recovered amounts and 52 improved
+exports. The table-completeness repairs preserve those number and period fixes.
+See the [income-statement changes](docs/INCOME_PERIOD_REGRESSION.md) for details.
+
+The latest full-collection check covered all 217 prepared runs, and all 739 tests
+passed. The reviewed outputs are now the reference for future regression checks;
+older outputs that lose the repaired rows or ending balances are rejected.
+Four known extraction failures, three excluded PDFs and other unresolved cases
+remain. See the [table-completeness changes](docs/TABLE_COMPLETENESS_REGRESSION.md)
+for details.
+
 ## Start here
 
 The desktop application is the simplest way to evaluate the project.
@@ -210,6 +232,12 @@ run:
 ```
 
 GitHub Actions runs these checks on Python 3.11 and 3.12.
+
+Before accepting extraction changes, use the local [collection acceptance command](docs/REGRESSION_RELEASE.md).
+It requires all 217 prepared runs, the current program and environment, the
+numerical gate, unit tests, lint and build checks. The approved reference retains
+source-reviewed corrections so that returning to older broken results fails.
+Cosmetic headings may remain warnings. See the [Phase 7 record](docs/REGRESSION_PHASE7.md).
 
 Run `run_ui_review.bat` to exercise the live app with synthetic corporate, fund,
 and failure cases. Generated workbooks go to a new `tmp/ui-review/session-*`

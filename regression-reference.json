@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "baseline": "outputs/regression-table-completeness-phase6/approved-baseline",
+  "baseline_manifest_sha256": "1737a0f75c6efadedd46e8ddd1b3be784756ece48c9b70079c658888f47cc0da",
+  "input_inventory": "outputs/regression-table-completeness-phase6/approved-baseline/input-inventory.json",
+  "input_inventory_sha256": "c67eae9126fdbb0ee4c1928f769f9ce8c41ce36f466fe1adf9c5c6c33d2b6f03"
+}

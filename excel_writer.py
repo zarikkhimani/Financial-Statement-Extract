@@ -12,6 +12,7 @@ from path_policy import normalize_path
 from normalization import parse_numeric_token
 from financial_statement_extract.table_layout import SINGLE_NUMBER, equity_display_grid
 from financial_statement_extract.schedule_layout import schedule_display_grid
+from financial_statement_extract.numeric_layout import accounting_display_grid
 from financial_statement_extract.workbook_validation import BALANCE_COMPLETENESS, balance_completeness_status
 
 
@@ -406,7 +407,8 @@ def _write_source_grids(workbook, worksheet, df):
     _write_literal(worksheet, TOP_BLANK_ROWS, 0, df.attrs.get("company_name", ""), heading)
     title = str(df.attrs.get("statement_title", ""))
     _write_literal(worksheet, TOP_BLANK_ROWS + 1, 0, title, heading)
-    tables = [schedule_display_grid(equity_display_grid(table)) for table in df.attrs["source_tables"]]
+    tables = [accounting_display_grid(schedule_display_grid(equity_display_grid(table)))
+              for table in df.attrs["source_tables"]]
     width_count = max(len(row) for table in tables for row in table["rows"])
     widths = [2] * width_count
     for table in tables:

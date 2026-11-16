@@ -14,6 +14,12 @@ INTERIM_PERIOD_RE = re.compile(
     rf"\b(?:three|six|nine|twelve|\d+)\s+months?\s+ended\s+{MONTH_RE}\s+\d{{1,2}}\b",
     re.IGNORECASE,
 )
+ISSUER_WORD = r"[A-Z0-9][\w&.,'’()-]*"
+ISSUER_HEADING_PREFIX = re.compile(
+    rf"^(?P<issuer>{ISSUER_WORD}(?:\s+(?:{ISSUER_WORD}|&|and|of|the)){{0,11}})"
+    r"\s+(?i:and\s+(?:its\s+)?subsidiaries)\s+"
+    r"(?=(?i:(?:condensed\s+)?consolidated)\b)"
+)
 
 
 def normalize_title(text: str) -> str:
@@ -29,6 +35,10 @@ def detect_statement_heading_type(line: str) -> str | None:
     heading = normalize_financial_text(line)
     heading = re.sub(r"^(?:unaudited|audited)\s+", "", heading, flags=re.IGNORECASE)
     heading = re.sub(r"\s*\((?:unaudited|audited|continued)\)\s*\.?\s*$", "", heading, flags=re.IGNORECASE)
+    # Some filings put the issuer and subsidiaries on the heading line.
+    # Require a capitalized issuer name and an exact remaining statement title
+    # so ordinary narrative references and TOC page numbers still do not match.
+    heading = ISSUER_HEADING_PREFIX.sub("", heading)
     norm = normalize_title(heading)
     if not norm:
         return None
@@ -175,11 +185,12 @@ def detect_partners_capital_value_headers(lines: list[dict]) -> list[str]:
     return labels
 
 def detect_statement_unit_note(lines: list[dict]) -> dict:
+    pattern = r"in thousands|in millions|in billions|\$000|\$mm|\$bn|\b000['\u2019\ufffd]?s\b"
     for row in lines[:20]:
         text = normalize_financial_text(row.get("raw_text", ""))
         low = text.lower()
-        if any(token in low for token in ("in thousands", "in millions", "in billions", "$000", "$mm", "$bn", "000s")):
-            match = re.search(r"\([^)]*(?:in thousands|in millions|in billions|\$000|\$mm|\$bn|000s)[^)]*\)", text, re.IGNORECASE)
+        if re.search(pattern, low) or re.fullmatch(r"\(\s*(?:thousands|millions|billions)\s*\)", low):
+            match = re.search(r"\([^)]*(?:" + pattern + r")[^)]*\)", text, re.IGNORECASE)
             unit_text = match.group(0) if match else text
             result = classify_unit_note(unit_text)
             result["raw_unit_note"] = unit_text
@@ -192,6 +203,9 @@ def infer_company_name(lines: list[dict]) -> str:
         text = normalize_financial_text(row.get("raw_text", ""))
         if not text:
             continue
+        issuer = ISSUER_HEADING_PREFIX.match(text)
+        if issuer:
+            return issuer.group("issuer")
         if detect_statement_type(text):
             continue
         if is_period_header_line(text):

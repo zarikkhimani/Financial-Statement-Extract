@@ -257,6 +257,15 @@ known coverage or completeness concerns.
 
 ## Reporting the result
 
+When changing shared extraction or export logic, use the
+[collection acceptance procedure](REGRESSION_RELEASE.md) before accepting the
+change. It must cover the complete local PDF inventory and match the current
+program and dependencies. A subset, an old program snapshot, or unit tests alone
+cannot satisfy collection acceptance. Use the active approved reference from
+`regression-reference.json`; intentional numerical corrections require exact
+source evidence. Preserve earlier baselines. Cosmetic heading defects may remain
+warnings; amounts, signs, periods, units and row associations remain protected.
+
 Return the exact workbook path and a concise account of the extraction scope:
 
 - Source filing and selected PDF pages, or HTML input type.

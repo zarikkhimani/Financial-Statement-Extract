@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import Counter
 import re
 
-from normalization import parse_numeric_token
+from normalization import normalize_financial_text, parse_numeric_token
 from financial_statement_extract.detection import is_section_boundary
 from statements import VALUE_TOKEN, _is_structural_header, _match_desc_first
 from structure import DATE_RE, detect_period_labels, detect_statement_unit_note
@@ -20,12 +20,18 @@ class CashFlowLayoutError(ValueError):
 
 
 def _headers(rows):
-    """Only standalone source year/date lines establish a value-column count."""
+    """Explicit period cues or standalone date lines establish value columns."""
     headers = []
     for i, row in enumerate(rows):
         text = row.get("raw_text", "").strip()
         dates = DATE_RE.findall(text)
-        if dates and not DATE_RE.sub("", text).strip(" ,"):
+        inline = re.fullmatch(
+            r"(?:For\s+)?(?:the\s+)?years? ended\s+[A-Za-z]+\s+\d{1,2},?\s+"
+            r"((?:19|20)\d{2}(?:\s+(?:19|20)\d{2}){1,5})", text, re.I)
+        if inline:
+            labels = inline.group(1).split()
+            headers.append((i, i, labels, text[:inline.start(1)].strip()))
+        elif dates and not DATE_RE.sub("", text).strip(" ,"):
             start = i - 1 if i and rows[i-1]["raw_text"].strip().lower() == "as of" else i
             headers.append((start, i, dates, "As of"))
         elif re.fullmatch(r"(?:19|20)\d{2}(?:\s+(?:19|20)\d{2}){1,5}", text):
@@ -48,7 +54,7 @@ def _page_blocks(source, page, title):
     source = source[:stop]
     headers = _headers(source)
     if not headers:
-        raise CashFlowLayoutError("No standalone cash-flow period headings were found.")
+        raise CashFlowLayoutError("No explicit cash-flow period headings were found.")
     if any(_match_desc_first(row.get("raw_text", ""), len(headers[0][2])) for row in source[:headers[0][0]]):
         raise CashFlowLayoutError("Cash-flow amounts precede the first usable period heading.")
     blocks = []
@@ -157,8 +163,18 @@ def recover_cash_flow_tables(tables, text_rows, page_plan):
                 for row in table["rows"]:
                     if not row[0]:
                         continue
+                    if _headers([{"raw_text": " ".join(row)}]):
+                        continue  # Source period labels, not financial amounts.
                     values = [v for v in row[1:] if v.strip() and v.strip() not in {"$", "€", "£", "¥"}]
                     if values and all(parse_numeric_token(v).status in {"NUMERIC", "DASH", "NA", "NM"} for v in values):
+                        # A lattice column may contain the label plus the first
+                        # amount. Recover that complete vector before comparing;
+                        # otherwise the remaining columns look like lost values.
+                        widths = {len(t["period_labels"]) for t in recovered}
+                        if len(widths) == 1 and len(values) < next(iter(widths)):
+                            matched = _match_desc_first(normalize_financial_text(" ".join(row)), next(iter(widths)))
+                            if matched:
+                                values = matched[1]
                         required[_amounts(values)] += 1
                 if required - available:
                     raise CashFlowLayoutError("Recovered cash-flow rows do not preserve every selected table amount.")

@@ -97,7 +97,7 @@ def classify_unit_note(text: str) -> dict:
     clauses = re.split(r"\bexcept\b", normalized, maxsplit=1)
     monetary_note = clauses[0]
     scale_patterns = (
-        (r"\bthousands\b|\$000\b|\b000s\b", "thousands", 1_000),
+        (r"\bthousands\b|\$000\b|\b000['\u2019\ufffd]?s\b", "thousands", 1_000),
         (r"\bmillions\b|\$mm\b", "millions", 1_000_000),
         (r"\bbillions\b|\$bn\b", "billions", 1_000_000_000),
     )

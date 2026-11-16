@@ -49,6 +49,8 @@ STATEMENT_TITLES = {
     # Recognize public-company equity roll-forwards as separate statements so
     # they can be exported without being absorbed into an adjacent statement.
     "StockholdersEquityStatement": (
+        "statement of equity",
+        "statements of equity",
         "statement of stockholders' equity",
         "statements of stockholders' equity",
         "statement of stockholders’ equity",
