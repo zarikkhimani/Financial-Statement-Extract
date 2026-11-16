@@ -24,6 +24,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--table-strategy", choices=("adaptive", "all"), default="adaptive",
                         help="Adaptive uses PDFPlumber first and runs Camelot for incomplete pages; all runs every method.")
     parser.add_argument("--fiscal-year")
+    parser.add_argument("--compare-pymupdf", action="store_true",
+                        help="PDF only: add independent PyMuPDF line/text table grids and comparison diagnostics.")
     parser.add_argument("--period")
     parser.add_argument("--audit-status")
     parser.add_argument(
@@ -56,6 +58,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             allow_nonlocal_paths=args.allow_nonlocal_paths,
             page_policy=args.page_policy,
             table_strategy=args.table_strategy,
+            **({"compare_pymupdf": True} if args.compare_pymupdf else {}),
         )
     except PageSelectionReviewRequired as exc:
         from extractors import format_page_numbers

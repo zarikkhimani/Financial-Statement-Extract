@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 import re
 import unicodedata
 
@@ -199,6 +200,7 @@ def extract_pdf_to_workbook(
     allow_nonlocal_paths: bool = False,
     page_policy: str = "review",
     table_strategy: str = "adaptive",
+    compare_pymupdf: bool = False,
     progress: ProgressReporter | None = None,
 ) -> tuple[ExtractionResult, Path]:
     report(progress, Stage.VALIDATING)
@@ -207,6 +209,9 @@ def extract_pdf_to_workbook(
     path = normalize_path(pdf_path, allow_nonlocal_paths=allow_nonlocal_paths)
     if not path.exists():
         raise FileNotFoundError(path)
+    if compare_pymupdf:
+        from financial_statement_extract.pymupdf_comparison import require_pymupdf
+        require_pymupdf()
 
     report(progress, Stage.DETECTING_PAGES, "Reading PDF text and preparing the page selection")
     page_count = get_page_count(path)
@@ -233,17 +238,22 @@ def extract_pdf_to_workbook(
     page_indices = [page - 1 for page in page_plan.selected_pages]
     raw_text_rows = [row for row in raw_text_rows if row.get("source_page") in page_plan.selected_pages]
     report(progress, Stage.EXTRACTING_TABLES, f"PDFPlumber · {len(page_plan.selected_pages)} selected pages")
+    table_start = perf_counter()
     plumber_raw, plumber_normalized, plumber_table_audit = extract_tables_pdfplumber(path, effective_pages)
+    plumber_seconds = perf_counter() - table_start
     for row in plumber_raw:
         row["selected"] = True
     covered = covered_pages(plumber_raw, raw_text_rows)
     fallback_pages = list(page_plan.selected_pages) if table_strategy == "all" else [
         page for page in page_plan.selected_pages if page not in covered]
     camelot_raw, camelot_normalized, camelot_audit = ([], [], [])
+    camelot_seconds = 0.0
     if fallback_pages:
         report(progress, Stage.EXTRACTING_TABLES, f"Camelot fallback · {len(fallback_pages)} pages")
+        table_start = perf_counter()
         camelot_raw, camelot_normalized, camelot_audit = extract_tables_camelot(
             path, format_page_numbers(fallback_pages))
+        camelot_seconds = perf_counter() - table_start
 
     # Keep sufficiently covered PDFPlumber grids. For other pages use Camelot's
     # selected flavor if available, preserving every attempted raw candidate.
@@ -265,6 +275,18 @@ def extract_pdf_to_workbook(
     report(progress, Stage.EXTRACTING_TABLES, "PDFPlumber Experimental - independent comparison")
     experimental_raw, experimental_normalized, experimental_audit = extract_tables_pdfplumber_experimental(
         path, effective_pages)
+
+    pymupdf_comparison = {}
+    if compare_pymupdf:
+        from financial_statement_extract.pymupdf_comparison import extract_comparison
+        report(progress, Stage.EXTRACTING_TABLES, "PyMuPDF · independent line and text table comparisons")
+        pymupdf_comparison = extract_comparison(path, effective_pages, raw_text_rows, raw_table_cells)
+        pymupdf_comparison["timings"].update(
+            pdfplumber_tables_seconds=plumber_seconds, camelot_tables_seconds=camelot_seconds)
+        pymupdf_comparison["audit_rows"].append(dict(
+            Check="Comparison baseline table timing", Scope="Selected PDF pages", Status="INFO",
+            Detail=f"PDFPlumber {plumber_seconds:.4f}s; Camelot {camelot_seconds:.4f}s "
+                   f"on {len(fallback_pages)} fallback pages. Includes each baseline extractor's file-open costs."))
 
     report(progress, Stage.PARSING, "Preserving statement labels and source-table layouts")
     if auto_mode:
@@ -326,6 +348,7 @@ def extract_pdf_to_workbook(
         experimental_raw_table_cells=experimental_raw,
         experimental_normalized_table_cells=experimental_normalized,
         experimental_audit_rows=experimental_audit,
+        pymupdf_comparison=pymupdf_comparison,
     )
 
     from financial_statement_extract.workbook_validation import audit_selected_page_coverage
@@ -423,6 +446,7 @@ def extract_filing_to_workbook(
     allow_nonlocal_paths: bool = False,
     page_policy: str = "review",
     table_strategy: str = "adaptive",
+    compare_pymupdf: bool = False,
     progress: ProgressReporter | None = None,
 ) -> tuple[ExtractionResult, Path]:
     path = normalize_path(input_path, allow_nonlocal_paths=allow_nonlocal_paths)
@@ -436,9 +460,12 @@ def extract_filing_to_workbook(
             allow_nonlocal_paths=allow_nonlocal_paths,
             page_policy=page_policy,
             table_strategy=table_strategy,
+            **({"compare_pymupdf": True} if compare_pymupdf else {}),
             progress=progress,
         )
     if suffix in HTML_SUFFIXES:
+        if compare_pymupdf:
+            raise ValueError("PyMuPDF comparison requires a PDF input.")
         return extract_html_to_workbook(
             str(path),
             metadata,

@@ -243,11 +243,11 @@ Net income 30 20
     try:
         assert workbook.sheetnames == [
             "Income Statements",
-            "Lattice",
             "Stream",
             "PDFPlumber",
             "Experiential",
             "Review",
+            "Lattice",
         ]
         for tab in workbook:
             assert all(cell.value is None for row in tab.iter_rows(min_row=1, max_row=3) for cell in row)

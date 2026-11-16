@@ -90,3 +90,4 @@ class ExtractionResult:
     experimental_raw_table_cells: list[dict] = field(default_factory=list)
     experimental_normalized_table_cells: list[dict] = field(default_factory=list)
     experimental_audit_rows: list[dict] = field(default_factory=list)
+    pymupdf_comparison: dict = field(default_factory=dict)

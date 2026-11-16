@@ -17,6 +17,7 @@ def extract_filing(
     allow_nonlocal_paths: bool = False,
     page_policy: str = "review",
     table_strategy: str = "adaptive",
+    compare_pymupdf: bool = False,
     progress: ProgressReporter | None = None,
 ) -> tuple[ExtractionResult, Path]:
     """Extract a PDF or HTML filing and write a reviewable Excel workbook.
@@ -31,6 +32,10 @@ def extract_filing(
     Optional ``progress`` receives immutable stage-entry events on the calling
     thread. It must return promptly; exceptions propagate. No percentages or
     completion guarantees are implied by a stage event.
+
+    ``compare_pymupdf`` adds independent PDF grids and diagnostics when the
+    optional ``pymupdf`` extra is installed. Baseline statements and financial
+    checks retain their existing extractors. HTML input rejects this option.
     """
     from pipeline import extract_filing_to_workbook
 
@@ -39,6 +44,8 @@ def extract_filing(
         options["page_policy"] = page_policy
     if table_strategy != "adaptive":
         options["table_strategy"] = table_strategy
+    if compare_pymupdf:
+        options["compare_pymupdf"] = True
     if progress is not None:
         options["progress"] = progress
     return extract_filing_to_workbook(

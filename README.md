@@ -15,6 +15,10 @@ funds, insurance companies, and specialized businesses such as data centers.
 See the [changelog](CHANGELOG.md) for changes and [release readiness](docs/RELEASE_READINESS.md)
 for outstanding validation.
 
+An optional [PyMuPDF comparison](docs/PYMUPDF_COMPARISON.md) adds independent
+table grids and timing diagnostics through `--compare-pymupdf` in the CLI or
+`compare_pymupdf=True` in the Python API.
+
 ## Start here
 
 The desktop application is the simplest way to evaluate the project.

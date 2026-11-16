@@ -38,7 +38,6 @@ STATEMENT_TITLES = {
 }
 
 RAW_METHOD_SHEETS = (
-    ("lattice", "Lattice", "Lattice"),
     ("stream", "Stream", "Stream"),
     ("pdfplumber", "PDFPlumber", "PDFPlumber tables"),
 )
@@ -548,6 +547,8 @@ def _write_raw_method_sheet(
         LEFT_BLANK_COLUMNS,
         ("Experimental extracted cells; dollar amounts and space-separated numbers use separate columns."
          if flavor == "pdfplumber_experimental"
+         else "Comparison only; unmodified PyMuPDF cells. Not used in statement output or financial checks."
+         if flavor.startswith("pymupdf_")
          else "Unmodified extracted cells. Edit or clean this sheet as needed."),
         note_format,
     )
@@ -685,9 +686,18 @@ def write_extraction_workbook(
                 "PDFPlumber Experimental tables",
                 result.experimental_raw_table_cells,
             )
+            if result.pymupdf_comparison:
+                for strategy, name in (("lines", "PyMuPDF"), ("text", "PyMuPDF Text")):
+                    _write_raw_method_sheet(writer, f"pymupdf_{strategy}", name,
+                                            f"PyMuPDF {strategy} tables",
+                                            result.pymupdf_comparison["raw_table_cells"])
+                comparison_sheet = writer.book.add_worksheet("PyMuPDF Review")
+                writer.sheets["PyMuPDF Review"] = comparison_sheet
+                _write_review_checks(writer.book, comparison_sheet, result.pymupdf_comparison["audit_rows"])
 
         review_rows = list(result.financial_audit_rows)
         review_rows.extend(row for row in result.extraction_audit_rows + result.experimental_audit_rows
+                           + result.pymupdf_comparison.get("audit_rows", [])
                            if row.get("Status") not in {"PASS", "INFO"}
                            or row.get("Check") in {"Selected statement page coverage", "Source text amount-row coverage", BALANCE_COMPLETENESS})
         if not review_rows:
@@ -698,6 +708,9 @@ def write_extraction_workbook(
             review = writer.book.add_worksheet(review_name)
             writer.sheets[review_name] = review
             _write_review_checks(writer.book, review, review_rows)
+
+        if pdf_result:
+            _write_raw_method_sheet(writer, "lattice", "Lattice", "Lattice", result.raw_table_cells)
 
         if first_worksheet is None:
             raise ValueError("No financial statements were extracted; no workbook was created.")

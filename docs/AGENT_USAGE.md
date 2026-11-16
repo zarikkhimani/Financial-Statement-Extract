@@ -76,6 +76,7 @@ per filing and retain each job's source path, options, exit code, and output pat
 | `--pages "12,14-16"` | Select PDF pages explicitly. Defaults to `auto`; ignored for HTML. |
 | `--page-policy POLICY` | Handle PDF page review with `review` (default), `exact`, or `suggested`. See the procedure below. |
 | `--table-strategy STRATEGY` | Use `adaptive` (default) for PDFPlumber extraction with Camelot fallback on incomplete pages, or `all` to run both methods on all selected pages. |
+| `--compare-pymupdf` | PDF only: run the optional independent PyMuPDF comparison and add its raw grids and diagnostics. See [comparison setup and limitations](PYMUPDF_COMPARISON.md). |
 | `--client-name NAME` | Supply the client name. |
 | `--fiscal-year YEAR` | Supply the fiscal year. |
 | `--period PERIOD` | Supply the reporting period. |
