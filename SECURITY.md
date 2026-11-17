@@ -50,6 +50,18 @@ require additional investigation.
 - Source filings, generated workbooks, credentials, logs, and local
   environments are excluded from version control.
 
+## Dependency updates
+
+Installation requires Pillow 13 or newer, Soup Sieve 4.1.1 or newer, and
+setuptools 84.1 or newer for development and builds. The optional comparison
+requires PyMuPDF 2.1 or newer. These minimums replace the versions flagged in
+the November 2026 dependency review. Upper bounds remain in `pyproject.toml`
+to keep future major upgrades explicit.
+
+Dependency changes must pass the full local collection comparison as well as
+the normal tests and build checks. See [collection acceptance](docs/REGRESSION_RELEASE.md).
+An advisory lookup is a check for known issues, not a guarantee of security.
+
 ## Known limitations
 
 - PDF and HTML parsers do not yet have enforceable file-size, page-count,

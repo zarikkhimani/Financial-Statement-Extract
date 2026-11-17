@@ -10,7 +10,7 @@ The existing uncommitted work is included in the saved source.
 - [Known issues and evidence limits](../outputs/regression-baselines/phase1-20261116T025555Z/known-issues.json)
 - [Validation results](../outputs/regression-baselines/phase1-20261116T025555Z/validation/RESULTS.md)
 
-The inventory covers all 116 unique PDFs in `C:\Users\zarik\Desktop\Loan Files`:
+The inventory covers all 116 unique PDFs in the local `Loan Files` folder:
 98 annual/quarterly filings for 49 BDC issuers and 18 additional annual reports.
 It preserves 98 companion HTML files, 98 historical page selections, 105 library
 workbooks and 92 project output workbooks. Workbooks are preserved comparison

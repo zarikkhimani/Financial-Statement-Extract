@@ -13,7 +13,7 @@ current limitations, see the [README](../README.md).
 
 ## Installation
 
-The documented environment is Windows with Python 3.11 or newer. Start in the
+The documented environment is Windows with Python 3.11.5 or newer. Start in the
 downloaded project folder. If the project is already installed, reuse its
 `.venv` environment. For an interactive installation, run
 `install_dependencies.bat`.

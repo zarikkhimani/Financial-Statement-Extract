@@ -9,6 +9,10 @@ Install inside the project's environment:
 PyMuPDF uses AGPL or commercial licensing; it is an optional extra, not a
 required dependency. See its [license documentation](https://pymupdf.readthedocs.io/en/latest/about.html#license-and-copyright).
 
+The comparison now requires PyMuPDF 2.1 or newer. Version 2 includes additional
+layout dependencies, so this optional installation is larger than the original
+1.28.2 trial below. The comparison still uses only text and table reading.
+
 Use the supported CLI:
 
 ```powershell

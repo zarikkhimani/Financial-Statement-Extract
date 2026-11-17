@@ -48,7 +48,7 @@ The desktop application is the simplest way to evaluate the project.
 ### Requirements
 
 - Windows
-- Python 3.11 or newer
+- Python 3.11.5 or newer
 - A local PDF or HTML filing
 
 ### Install and run

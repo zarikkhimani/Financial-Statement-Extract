@@ -9,7 +9,7 @@ if not exist "%VENV_PYTHON%" (
     ) else (
         where python >nul 2>nul
         if errorlevel 1 (
-            echo Python 3 was not found. Install Python 3.11 or newer, then run this file again.
+            echo Python 3 was not found. Install Python 3.11.5 or newer, then run this file again.
             pause
             exit /b 1
         )
